@@ -44,8 +44,17 @@ ANDROID_NDK_ROOT_DIR="${TOOL_HOME}/android-ndk"
 rust_ok()         { [ -x "$HOME/.cargo/bin/rustup" ] && "$HOME/.cargo/bin/rustup" toolchain list 2>/dev/null | grep -q "$RUST_VER"; }
 apt_ok()          { command -v bison >/dev/null 2>&1; }
 
+say() { echo ">>> setup: $*"; }
+
 fetch() { # url dest
-    curl -fsSL --retry 3 --retry-all-errors -o "$2" "$1"
+    # retry-all-errors + delay: GitHub release assets redirect to a signed
+    # CDN blob that has served transient 404s from runners (M0 runs
+    # 37625275857/37626025676); immediate retries reproduced it, patience fixes it.
+    local url=$1 dest=$2 host
+    host=$(printf '%s' "$url" | sed -E 's|^https://([^/]+)/.*|\1|')
+    say "fetch $dest <- $host"
+    curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "$dest" "$url" \
+        || { say "fetch FAILED: $url"; return 1; }
 }
 
 # ---------- apt packages (runner-local; fast, not cached) ----------
@@ -67,6 +76,7 @@ fi
 # Binary tar.gz distribution, NOT the Kitware self-extractor .sh: the
 # self-extractor dies with "can't cd to <prefix>" when extracting under
 # $TOOL_HOME on the runner (M0 run 37624652911).
+say "component: cmake"
 if ! { done_ cmake && cmake_ok; }; then
     fetch "$(m "tools.cmake_url")" /tmp/cmake.tar.gz
     mkdir -p "$TOOL_HOME/cmake"
@@ -75,6 +85,7 @@ if ! { done_ cmake && cmake_ok; }; then
 fi
 
 # ---------- node ----------
+say "component: node"
 if ! { done_ node && node_ok; }; then
     fetch "$(m "tools.node_url")" /tmp/node.tar.xz
     mkdir -p "$TOOL_HOME/node"
@@ -83,6 +94,7 @@ if ! { done_ node && node_ok; }; then
 fi
 
 # ---------- bun host (codegen) ----------
+say "component: bun-host"
 if ! { done_ bun-host && bun_host_ok; }; then
     fetch "$(m "tools.bun_host_url")" /tmp/bun.zip
     mkdir -p "$TOOL_HOME/bun-host"
@@ -96,6 +108,7 @@ fi
 # the llvmorg-21.1.8 release). The 2 GB tarball is cached under TOOL_HOME but
 # extracted OUTSIDE it (~7 GB would blow the cache entry); extraction is a
 # few minutes per run.
+say "component: llvm"
 if ! { done_ llvm && llvm_ok; }; then
     TB="$TOOL_HOME/downloads/LLVM-${LLVM_VER}-Linux-X64.tar.xz"
     mkdir -p "$TOOL_HOME/downloads" "$LLVM_DIR"
@@ -105,6 +118,7 @@ if ! { done_ llvm && llvm_ok; }; then
 fi
 
 # ---------- NDK ----------
+say "component: ndk"
 if ! { done_ ndk && ndk_ok; }; then
     fetch "$(m "tools.ndk_url")" /tmp/ndk.zip
     unzip -q /tmp/ndk.zip -d "$TOOL_HOME"
@@ -119,6 +133,7 @@ if ! { done_ ndk && ndk_ok; }; then
 fi
 
 # ---------- rust ----------
+say "component: rust"
 if ! { done_ rust && rust_ok; }; then
     if ! command -v rustup >/dev/null 2>&1; then
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
