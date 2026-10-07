@@ -31,10 +31,17 @@ standalone-graph emitter 1.3.2) is closed and must not be touched from here.
 ```
 ci/                     source-manifest.json, setup-runner.sh, validate-source-tree.sh,
                         link-ndk-runtimes.sh, build-android.sh
-patches/android/        versioned Bionic/Termux patches (M1+)
-scripts/verify-device.sh  on-device checks (Termux side, never ~/.local/bin)
-.github/workflows/build-android.yml  workflow_dispatch: host-smoke | android
-docs/PROGRESS.md        milestone checklist + evidence log
+patches/android/        versioned Bionic/Termux patches (see docs/PATCHES.md)
+scripts/verify-*.sh     on-device checks (Termux side, never ~/.local/bin)
+.github/workflows/
+  build-android.yml     workflow_dispatch: host-smoke | android (no publish)
+  release-android.yml   workflow_dispatch only: publishes a prior android run
+docs/
+  BUILD.md              build recipe, toolchain pins, CI/caches
+  PATCHES.md            the six android patches and the TinyCC quadruple gate
+  VERIFY.md             on-device protocol and evidence format
+  RELEASE.md            publication policy and procedure
+  PROGRESS.md           milestone checklist + evidence log
 ```
 
 ## Acceptance rule

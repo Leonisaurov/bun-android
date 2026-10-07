@@ -80,7 +80,11 @@ prebuilt se extraído desde `~/.cache/bun-build`; solo moría el upload edge.
   gate real es que el linker bionic lo cargue en el teléfono (ver abajo).
 - [x] Riesgos cc-rs/`__ANDROID_API__`: **no materializados** — el cross-build
   pasó en la primera corrida sin patches (`patches/android/` sigue vacío).
-- [ ] Release propia (tarball) vía `workflow_dispatch` (no push).
+- [ ] Release propia (tarball) vía `workflow_dispatch` (no push). Mecanismo
+  listo desde 2026-10-07: `.github/workflows/release-android.yml` (consume el
+  artifact `bun-aarch64-android` de un run android previo; política y
+  procedimiento en `docs/RELEASE.md`). Pendiente solo el dispatch, que crea
+  la release pública.
 - [x] Cierre en dispositivo: `~/.bun-android/bin/bun --version` ⇒ `1.4.2`
   rc=0 (no toca `~/.local/bin`).
 
