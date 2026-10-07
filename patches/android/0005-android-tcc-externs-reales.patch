@@ -1,0 +1,39 @@
+From c595717d7caef9feabb12ab00df98a9d8e80da0a Mon Sep 17 00:00:00 2001
+From: Leonisaurov <leonisaurov@gmail.com>
+Date: Wed, 7 Oct 2026 10:03:48 -0600
+Subject: [PATCH] fix(android): enlazar los extern reales de libtcc en bionic
+
+Tercer gate del port TinyCC (tras config.ts/0002 y ENABLE_TINYCC/0003):
+la macro tcc_externs! de src/tcc_sys/tcc.rs sustituye el bloque extern
+por stubs unreachable!() en android/freebsd porque upstream no construye
+libtcc en esos targets. Con 0002 los 10 objetos ya se compilan y van a
+la linea de link, y el panic medido en dispositivo (tcc_new) confirma
+que los stubs siguen activos. Se retira solo la rama android; freebsd
+queda intacto. Predicado mantenido en sync con cfg.tinycc/ENABLE_TINYCC
+como exige el comentario del propio macro.
+---
+ src/tcc_sys/tcc.rs | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/tcc_sys/tcc.rs b/src/tcc_sys/tcc.rs
+index 0a95ffe..0b70040 100644
+--- a/src/tcc_sys/tcc.rs
++++ b/src/tcc_sys/tcc.rs
+@@ -27,12 +27,12 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
+ // and `ENABLE_TINYCC` in `scripts/build/buildOptionsRs.ts`.
+ macro_rules! tcc_externs {
+     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
+-        #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
++        #[cfg(not(target_os = "freebsd"))]
+         unsafe extern "C" {
+             $($(#[$attr])* fn $name($($arg: $ty),*) $(-> $ret)?;)*
+         }
+         $(
+-            #[cfg(any(target_os = "android", target_os = "freebsd"))]
++            #[cfg(target_os = "freebsd")]
+             #[allow(unused_variables, clippy::missing_safety_doc)]
+             unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
+                 unreachable!(concat!(
+-- 
+2.56.0
+
