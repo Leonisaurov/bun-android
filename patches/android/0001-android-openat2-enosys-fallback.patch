@@ -1,0 +1,127 @@
+From 08975c179b1768fff253ef7c7c353dcd33d6bc05 Mon Sep 17 00:00:00 2001
+From: bun-android <ci@local>
+Date: Wed, 7 Oct 2026 08:41:07 -0600
+Subject: [PATCH] fix(android): openat2 es SIGSYS-kill bajo seccomp; ENOSYS +
+ fallback a openat
+
+Android no tiene openat2 en la allowlist seccomp de apps y el filtro
+envia SIGSYS (medido en Termux, kernel 5.10, run 37635152940 + probe
+serve con dir-route: rc=159 Bad system call). openat2_beneath/in_root
+devuelven ENOSYS en android (los callers ya lo tratan como unsupported)
+y DirectoryRoute.open_beneath usa openat, como macOS/Windows.
+
+Port del fallback del port zig-era (opencode-termux), adaptado al
+stack Rust de bun-v1.4.2 (744846f84437).
+---
+ src/runtime/server/DirectoryRoute.rs |  7 ++-
+ src/sys/linux_syscall.rs             | 71 ++++++++++++++++++----------
+ 2 files changed, 50 insertions(+), 28 deletions(-)
+
+diff --git a/src/runtime/server/DirectoryRoute.rs b/src/runtime/server/DirectoryRoute.rs
+index 7edc61e..db20f9c 100644
+--- a/src/runtime/server/DirectoryRoute.rs
++++ b/src/runtime/server/DirectoryRoute.rs
+@@ -302,9 +302,12 @@ impl DirectoryRoute {
+         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+         #[cfg(windows)]
+         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
+-        #[cfg(any(target_os = "linux", target_os = "android"))]
++        #[cfg(target_os = "linux")]
+         let fd = bun_sys::openat2_in_root(self.root_fd.get(), zrel, flags, 0).ok()?;
+-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
++        // Android: openat2 is seccomp-killed (SIGSYS); plain openat matches
++        // what macOS/Windows already do. Router rejects `.`/`..`/`%2F` before
++        // this call; kernel-level IN_ROOT clamping is simply unavailable.
++        #[cfg(not(target_os = "linux"))]
+         let fd = bun_sys::openat(self.root_fd.get(), zrel, flags, 0).ok()?;
+         // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
+         // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.
+diff --git a/src/sys/linux_syscall.rs b/src/sys/linux_syscall.rs
+index ae5cc00..f591add 100644
+--- a/src/sys/linux_syscall.rs
++++ b/src/sys/linux_syscall.rs
+@@ -91,36 +91,55 @@ pub(crate) fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd,
+ 
+ #[inline]
+ pub(crate) fn openat2_beneath(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
+-    let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
+-    let mode = rustix::fs::Mode::from_raw_mode(mode);
+-    let dir = dir.as_borrowed_fd();
+-    retry(|| {
+-        rustix::fs::openat2(
+-            dir,
+-            path.as_cstr(),
+-            oflags,
+-            mode,
+-            rustix::fs::ResolveFlags::BENEATH,
+-        )
+-    })
+-    .map(own_fd)
++    // Android: openat2 is not in the app seccomp allowlist and the filter
++    // sends SIGSYS (process killed), so the syscall must not be attempted.
++    // Report ENOSYS; callers already treat it as "unsupported" and fall back.
++    #[cfg(target_os = "android")]
++    {
++        let _ = (dir, path, flags, mode);
++        return Err(libc::ENOSYS);
++    }
++    #[cfg(not(target_os = "android"))]
++    {
++        let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
++        let mode = rustix::fs::Mode::from_raw_mode(mode);
++        let dir = dir.as_borrowed_fd();
++        retry(|| {
++            rustix::fs::openat2(
++                dir,
++                path.as_cstr(),
++                oflags,
++                mode,
++                rustix::fs::ResolveFlags::BENEATH,
++            )
++        })
++        .map(own_fd)
++    }
+ }
+ 
+ #[inline]
+ pub(crate) fn openat2_in_root(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
+-    let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
+-    let mode = rustix::fs::Mode::from_raw_mode(mode);
+-    let dir = dir.as_borrowed_fd();
+-    retry(|| {
+-        rustix::fs::openat2(
+-            dir,
+-            path.as_cstr(),
+-            oflags,
+-            mode,
+-            rustix::fs::ResolveFlags::IN_ROOT | rustix::fs::ResolveFlags::NO_MAGICLINKS,
+-        )
+-    })
+-    .map(own_fd)
++    #[cfg(target_os = "android")]
++    {
++        let _ = (dir, path, flags, mode);
++        return Err(libc::ENOSYS);
++    }
++    #[cfg(not(target_os = "android"))]
++    {
++        let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
++        let mode = rustix::fs::Mode::from_raw_mode(mode);
++        let dir = dir.as_borrowed_fd();
++        retry(|| {
++            rustix::fs::openat2(
++                dir,
++                path.as_cstr(),
++                oflags,
++                mode,
++                rustix::fs::ResolveFlags::IN_ROOT | rustix::fs::ResolveFlags::NO_MAGICLINKS,
++            )
++        })
++        .map(own_fd)
++    }
+ }
+ 
+ #[inline]
+-- 
+2.56.0
+
