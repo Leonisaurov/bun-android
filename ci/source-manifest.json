@@ -21,6 +21,8 @@
     "ndk": "r27c",
     "ndk_url": "https://dl.google.com/android/repository/android-ndk-r27c-linux.zip",
     "llvm": "21.1.8",
+    "llvm_url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-X64.tar.xz",
+    "llvm_note": "From this release onward llvm/llvm-project publishes no clang+llvm linux-x64 ubuntu flavour; LLVM-<ver>-Linux-X64.tar.xz is the official prebuilt clang+lld bundle.",
     "cmake": "3.30.5",
     "cmake_url": "https://github.com/Kitware/CMake/releases/download/v3.30.5/cmake-3.30.5-linux-x86_64.tar.gz",
     "node": "24.3.0",

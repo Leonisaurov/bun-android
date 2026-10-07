@@ -37,7 +37,8 @@ mark_() { touch "$TOOL_HOME/.done/$1"; }
 cmake_ok()        { [ -x "$TOOL_HOME/cmake/bin/cmake" ]; }
 node_ok()         { [ -x "$TOOL_HOME/node/bin/node" ]; }
 bun_host_ok()     { [ -x "$TOOL_HOME/bun-host/bun-linux-x64/bun" ]; }
-llvm_ok()         { [ -x "$TOOL_HOME/llvm/bin/clang" ]; }
+LLVM_DIR="${LLVM_DIR:-$HOME/llvm21}"
+llvm_ok()         { [ -x "$LLVM_DIR/bin/clang" ]; }
 ndk_ok()          { [ -d "$ANDROID_NDK_ROOT_DIR/toolchains/llvm/prebuilt" ]; }
 ANDROID_NDK_ROOT_DIR="${TOOL_HOME}/android-ndk"
 rust_ok()         { [ -x "$HOME/.cargo/bin/rustup" ] && "$HOME/.cargo/bin/rustup" toolchain list 2>/dev/null | grep -q "$RUST_VER"; }
@@ -90,16 +91,16 @@ if ! { done_ bun-host && bun_host_ok; }; then
 fi
 
 # ---------- LLVM/clang ----------
+# Official prebuilt clang for this release is LLVM-<ver>-Linux-X64.tar.xz
+# (llvm dropped the clang+llvm linux ubuntu-flavour assets; verified against
+# the llvmorg-21.1.8 release). The 2 GB tarball is cached under TOOL_HOME but
+# extracted OUTSIDE it (~7 GB would blow the cache entry); extraction is a
+# few minutes per run.
 if ! { done_ llvm && llvm_ok; }; then
-    url=""
-    for flavour in ubuntu-24.04 ubuntu-22.04; do
-        cand="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VER}/clang%2Bllvm-${LLVM_VER}-x86_64-linux-gnu-${flavour}.tar.xz"
-        if curl -fsIL --retry 3 -o /dev/null "$cand"; then url="$cand"; break; fi
-    done
-    [ -n "$url" ] || { echo "no clang+llvm ${LLVM_VER} linux x64 asset found" >&2; exit 1; }
-    fetch "$url" /tmp/llvm.tar.xz
-    mkdir -p "$TOOL_HOME/llvm"
-    tar -xJf /tmp/llvm.tar.xz -C "$TOOL_HOME/llvm" --strip-components=1
+    TB="$TOOL_HOME/downloads/LLVM-${LLVM_VER}-Linux-X64.tar.xz"
+    mkdir -p "$TOOL_HOME/downloads" "$LLVM_DIR"
+    [ -f "$TB" ] || fetch "$(m "tools.llvm_url")" "$TB"
+    tar -xJf "$TB" -C "$LLVM_DIR" --strip-components=1
     mark_ llvm
 fi
 
@@ -135,7 +136,7 @@ ln -sf "$TOOL_HOME/cmake/bin/cmake"            "$TOOL_HOME/bin/cmake"
 ln -sf "$TOOL_HOME/node/bin/node"              "$TOOL_HOME/bin/node"
 ln -sf "$TOOL_HOME/bun-host/bun-linux-x64/bun" "$TOOL_HOME/bin/bun"
 for t in clang clang++ lld ld.lld llvm-ar llvm-ranlib llvm-strip llvm-objcopy; do
-    ln -sf "$TOOL_HOME/llvm/bin/$t" "$TOOL_HOME/bin/$t"
+    ln -sf "$LLVM_DIR/bin/$t" "$TOOL_HOME/bin/$t"
 done
 ln -sf "$TOOL_HOME/bin/clang"  "$TOOL_HOME/bin/cc"
 ln -sf "$TOOL_HOME/bin/clang++" "$TOOL_HOME/bin/c++"
