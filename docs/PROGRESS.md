@@ -27,18 +27,33 @@ el teléfono tiene ~1.4 GB libres, CI baja el tarball del commit pineado.
   `.buildkite/Dockerfile` del commit pineado (bun host 1.3.13, node 24.3.0,
   NDK r27c recortado, symlinks compiler-rt/libunwind).
 
-## M0 · CI de toolchain verde + smoke host
+## M0 · CI de toolchain verde + smoke host — CERRADO 2026-10-07
 
-- [ ] Purge de disco en runner ubuntu-latest.
-- [ ] Caches `ci-cache-v1-toolchain-*` (NDK recortado, LLVM 21.1.8 tarball de
+- [x] Purge de disco en runner ubuntu-latest.
+- [x] Caches `ci-cache-v1-toolchain-*` (NDK recortado, LLVM 21.1.8 tarball de
   GitHub releases, cmake, node, bun host, rustup) y `ci-cache-v1-jsc-*`
   (`--cache-dir` con el prebuilt WebKit).
-- [ ] Symlinks NDK compiler-rt/libunwind → resource-dir del clang host.
-- [ ] Valideo del tarball (sha256 + VERSION 1.4.2) y árbol limpio (`git am`).
-- [ ] Build host `--profile=ci-build --os=linux --arch=x64 --lto=false`
-  (desviación documentada: `-lto` solo acelera el smoke de receta; la línea
-  android sí usa defaults oficiales) + `bun --version` del binario emitido.
-- [ ] Cierre: run verde; tool versions en step summary; `bun --version` rc=0.
+- [x] Symlinks NDK compiler-rt/libunwind → resource-dir del clang host.
+- [x] Valideo del tarball (sha256 + anclajes del árbol 1.4.2; el tarball
+  codeload no trae VERSION) y árbol limpio (`git init` baseline + `git am`).
+- [x] Build host `--profile=ci-build --os=linux --arch=x64 --lto=false
+  --buildkite=false` + `bun --version` del binario emitido.
+- [x] Cierre: run verde; tool versions en step summary; `bun --version` rc=0.
+
+**Evidencia de cierre** (run `37632466134`, commit `7ec479c`, 2026-10-07):
+- Setup verde: clang 21.1.8, cmake 3.30.5, rustc 1.99.0-nightly
+  (nightly-2026-07-20, 9f36de775), NDK r27c en `$TOOL_HOME/android-ndk`,
+  runtimes linkeados al resource-dir del clang.
+- Configure + grafo ninja (1248 targets) + cargo `release` 9m32s + link y
+  strip: `build/release/bun-profile`; `bun-profile --revision` ⇒
+  `1.4.2-canary.1+7ec479c45`; `$BIN --version` ⇒ `1.4.2` rc=0.
+- WebKit prebuilt (`autobuild-2e2aa229…`, linux-amd64) extraído a
+  `~/.cache/bun-build`; caches guardadas: jsc 535 MB y toolchain (keys
+  `a916fe9e…` / `1a94fbe0…`).
+- Desviaciones de la receta oficial, ambas con motivo: `--lto=false` (solo
+  smoke de receta; la línea android usa defaults), `--buildkite=false`
+  (el grafo `ci-build` emite edges `buildkite-agent` inexistentes en GHA) y
+  entry `bun scripts/build.ts` (upstream rechaza Node <25 para codegen).
 
 ### Bitácora de corridas M0 (fallas → fixes, todos commiteados)
 
