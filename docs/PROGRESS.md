@@ -40,7 +40,21 @@ el teléfono tiene ~1.4 GB libres, CI baja el tarball del commit pineado.
   android sí usa defaults oficiales) + `bun --version` del binario emitido.
 - [ ] Cierre: run verde; tool versions en step summary; `bun --version` rc=0.
 
-## M1 · primer ELF android desde CI propia
+### Bitácora de corridas M0 (fallas → fixes, todos commiteados)
+
+| Run | Sha | Falla en | Causa | Fix |
+|---|---|---|---|---|
+| 37624652911 | d88f70d | Setup | self-extractor Kitware de cmake muere bajo `$TOOL_HOME` (`cd: can't cd`) | distribución `.tar.gz` + `--strip-components=1` (`9ba9f5c`) |
+| 37625275857 / 37626025676 | 9ba9f5c / 1c7bf81 | Setup | 404: el release `llvmorg-21.1.8` no publica flavour `clang+llvm…ubuntu`; luego el 404 real era node dist | `LLVM-21.1.8-Linux-X64.tar.xz` extraído fuera de cache (`1c7bf81`); `node-v24.3.0-linux-x64.tar.xz` (`f0764ae`); marcadores `say()` + retries (`f452447`) |
+| 37626453157 / 37627000158 | f452447 / f0764ae | Validate | el tarball codeload no trae `VERSION` | valideo por anclajes del árbol + `git init` baseline (`8f3037e`) |
+| 37627910507 | 8f3037e | Host build (Configure) | "Node 24.3.0 cannot run the codegen scripts" — exige Node ≥25 o bun | entry point `bun scripts/build.ts` (`aeb56d5`) |
+| 37628734461 | aeb56d5 | Host build (Configure) | `nasm not found in toolchain` (Dockerfile upstream lo instala) | apt+: nasm/pkg-config/wget/unzip/make (`060f96f`) |
+| 37629973014 | 060f96f | Host build (ninja 168/1251) | `ci-build` implica `buildkite:true` → el grafo emite edges `buildkite-agent artifact upload` (`bun.ts` `registerBkUploadRules`) y el binario no existe en GHA: exit 127 | `--buildkite=false` en ambos builds + `save-always: true` en caches (`7ec479c`) |
+
+Progreso verificado en 37629973014: cargo `release` compiló 6m22s y el WebKit
+prebuilt se extraído desde `~/.cache/bun-build`; solo moría el upload edge.
+
+
 
 - [ ] `ci/build-android.sh` verde en modo `android` (misma receta oficial:
   `--profile=ci-build --os=linux --arch=aarch64 --abi=android`).
