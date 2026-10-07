@@ -47,12 +47,14 @@ jobs:
             ~/.rustup
             ~/.cargo
           key: ${{ runner.os }}-ci-cache-v1-toolchain-${{ hashFiles('ci/source-manifest.json', 'ci/setup-runner.sh', 'ci/link-ndk-runtimes.sh') }}
+          save-always: true
 
       - name: Cache JSC prebuilt + dep downloads
         uses: actions/cache@v4
         with:
           path: ~/.cache/bun-build
           key: ${{ runner.os }}-ci-cache-v1-jsc-${{ hashFiles('ci/source-manifest.json') }}
+          save-always: true
 
       - name: Setup runner toolchain
         run: bash ci/setup-runner.sh
@@ -88,8 +90,13 @@ jobs:
           # Upstream's builder refuses Node < 25 for codegen ("Node 24.3.0
           # cannot run the codegen scripts ... or run the build with bun");
           # the documented entry is `bun scripts/build.ts`.
+          # --buildkite=false: ci-build sets buildkite:true, which emits
+          # `buildkite-agent artifact upload` ninja edges (bun.ts
+          # registerBkUploadRules) that don't exist on GitHub Actions
+          # (run 37629973014 died with exit 127). Our artifacts are the
+          # binary itself, uploaded via actions/upload-artifact.
           bun scripts/build.ts \
-            --profile=ci-build --os=linux --arch=x64 --lto=false \
+            --profile=ci-build --os=linux --arch=x64 --lto=false --buildkite=false \
             --cache-dir "$HOME/.cache/bun-build"
           BIN=$(find build -maxdepth 3 -type f \( -name 'bun' -o -name 'bun-profile' \) -perm -u+x | head -n1)
           test -n "$BIN"

@@ -24,8 +24,11 @@ find_built_bun() {
 
 # Upstream's builder requires Node >= 25 for codegen; the documented entry
 # point on CI is `bun scripts/build.ts` with the pinned host bun.
+# --buildkite=false: ci-build implies buildkite:true, whose ninja graph
+# embeds `buildkite-agent artifact upload` edges absent on GitHub Actions.
 bun scripts/build.ts \
     --profile=ci-build --os=linux --arch=aarch64 --abi=android \
+    --buildkite=false \
     --android-ndk="$ANDROID_NDK_ROOT" --cache-dir="$CACHE_DIR" "$@"
 
 BIN=$(find_built_bun)
