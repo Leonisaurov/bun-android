@@ -142,7 +142,7 @@ sha256 `5245f48f…`, 2026-10-07):
   `BUN_NODE_DIR` de `bun run` queda en `/data/local/tmp` en builds android
   (solo afecta si un script invoca `node` sin node en PATH; fuera del alcance
   de los smokes).
-- [ ] TinyCC: gate triple descubierto — (a) `config.ts`/`deps/tinycc.ts`
+- [ ] TinyCC: gate cuádruple descubierto — (a) `config.ts`/`deps/tinycc.ts`
   (patch `0002`, habilita el build DirectBuild: fetch + codegen `tccdefs_.h` +
   10 objetos linkeados; la "anomalía" de edges ausentes era truncado del log
   de Actions, verificado por gaps de numeración 187–339/341–1220 donde
@@ -150,13 +150,21 @@ sha256 `5245f48f…`, 2026-10-07):
   `buildOptionsRs.ts` (guard runtime de `cc()` en `ffi_body.rs:998`; patch
   `0003` retira la linea android), (c) **stub `tcc_externs!` en
   `src/tcc_sys/tcc.rs`**: define los `extern "C"` como `unreachable!()` en
-  android/freebsd porque upstream no construye libtcc ahí. Con 0003 ya activo,
-  el dispositivo paniqueó en `tcc_new` (rc=134, `36214c433`) confirmando el
-  stub. Patch `0005-android-tcc-externs-reales.patch` retira android del
-  predicado (freebsd intacto; sincronizado con cfg.tinycc/ENABLE_TINYCC como
-  exige el comentario del macro). Pin upstream del crate tinycc:
-  `oven-sh/tinycc@05f0fafaa3be` (no el 29985a3b zig-era). Pendiente: run
-  `37649103236` → `scripts/verify-tinycc-device.sh` en el teléfono.
+  android/freebsd porque upstream no construye libtcc ahí — con 0003 activo
+  el dispositivo paniqueó en `tcc_new` (rc=134, build `36214c433`); patch
+  `0005` retira android del predicado (freebsd intacto). Con 0005 (build
+  `b244355df`, sha `e82cbf78…`) `tcc_new` corre y compila, pero falla en
+  runtime con (d) **`tcc: error: library 'c' not found`**: `tcc_add_runtime`
+  de libtcc añade `-lc` salvo `nostdlib`, y en Termux no existen los dirs
+  FHS que busca (`/usr/lib`, …). Los defaults zig-era 1.2.13 ya pasaban
+  `-nostdlib` (`ffi.zig:1501`) y el camino napi de 1.4.2 (`Function::compile`)
+  también lo usa internamente — patch `0006` alinea los dos sitios de
+  `CompileC` (`DEFAULT_TCC_OPTIONS` y el fallback de `compile()`). Pin
+  upstream del crate tinycc: `oven-sh/tinycc@05f0fafaa3be` (no el 29985a3b
+  zig-era). Pendiente: run `37652505142` → `scripts/verify-tinycc-device.sh`
+  en el teléfono. Limitación portada (igual que zig-era): sin stdlib, código
+  C que referencie símbolos libc requiere resolución adicional; fuera del
+  smoke de paridad.
 - [ ] Cierre: cada sub-hito con commit + evidencia en el teléfono.
 
 ## M4 · standalone 1.4.2 (proyecto aparte, no planeado aquí)
