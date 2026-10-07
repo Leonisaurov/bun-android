@@ -95,12 +95,22 @@ prebuilt se extraído desde `~/.cache/bun-build`; solo moría el upload edge.
 Pendiente menor: la release propia se emite cuando el binario merezca ser
 distribuido (tras M2/M3); no bloquea el hito.
 
-## M2 · smoke real en Bionic
+## M2 · smoke real en Bionic — CERRADO 2026-10-07
 
-- [ ] `bun run` de script con `fetch()` (https) en el teléfono.
-- [ ] `bun:sqlite` SELECT.
-- [ ] `bun install` de un paquete pequeño.
-- [ ] Cierre: capturas tmux fechadas en este documento.
+- [x] `bun run` de script con `fetch()` (https) en el teléfono.
+- [x] `bun:sqlite` SELECT.
+- [x] `bun install` de un paquete pequeño.
+- [x] Cierre: capturas tmux fechadas en este documento.
+
+**Evidencia** (Termux, tmux 120x32, binario `~/.bun-android/bin/bun`
+sha256 `5245f48f…`, 2026-10-07):
+- `fetch.ts` (`fetch("https://example.com")`): `fetch status: 200 bytes: 577`
+  ⇒ `RC_FETCH=0`.
+- `sqlite.ts` (CREATE/INSERT/SELECT en memoria):
+  `sqlite rows: [{"x":1,"y":"uno"},{"x":41,"y":"a"}]` ⇒ `RC_SQLITE=0`.
+- `bun install` (`ms@2.1.3`): banner `bun install v1.4.2-canary.1 (a40e66be9)`,
+  `1 package installed [136.00ms]` ⇒ `RC_INSTALL=0`; `bun run use.mjs` ⇒
+  `ms(1000): 1s`, `RC_USE=0`.
 
 ## M3 · paridad Termux (parches sobre el stack Rust)
 
