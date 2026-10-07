@@ -1,0 +1,37 @@
+From 042a71b1764fe0dba486a5927f24c107b1abec3b Mon Sep 17 00:00:00 2001
+From: Leonisaurov <leonisaurov@gmail.com>
+Date: Wed, 7 Oct 2026 09:40:35 -0600
+Subject: [PATCH] fix(android): tmpdir fallback Termux/$PREFIX/tmp en node:os
+
+Medido en dispositivo: con TMPDIR ausente, os.tmpdir() caia a
+/data/local/tmp (no escribible por el uid de Termux) y mkdtemp moria
+EACCES. Upstream eligio /data/local/tmp para android (contexto adb);
+el port Termux necesita el prefijo, igual que platformTempDir de la
+era-zig (fs.zig hardcodeaba /data/data/com.termux/files/usr/tmp).
+---
+ src/js/node/os.ts | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/js/node/os.ts b/src/js/node/os.ts
+index 3326d80..1e00fdc 100644
+--- a/src/js/node/os.ts
++++ b/src/js/node/os.ts
+@@ -12,8 +12,14 @@ var tmpdir = function () {
+       }
+       return path;
+     }
++    // Termux/Android: /data/local/tmp is not writable from the app uid and
++    // /tmp does not exist without FHS; use the Termux prefix tmp (same
++    // target as the zig-era platformTempDir fix).
+     var path =
+-      env["TMPDIR"] || env["TMP"] || env["TEMP"] || (process.platform === "android" ? "/data/local/tmp" : "/tmp");
++      env["TMPDIR"] ||
++      env["TMP"] ||
++      env["TEMP"] ||
++      (process.platform === "android" ? "/data/data/com.termux/files/usr/tmp" : "/tmp");
+     const length = path.length;
+     if (length > 1 && path[length - 1] === "/") path = path.slice(0, -1);
+     return path;
+-- 
+2.56.0
+
