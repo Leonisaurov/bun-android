@@ -1,0 +1,52 @@
+From d2ed4c4dbead285a088e1bb55d1a5785df4b5fe4 Mon Sep 17 00:00:00 2001
+From: Leonisaurov <leonisaurov@gmail.com>
+Date: Wed, 7 Oct 2026 10:29:51 -0600
+Subject: [PATCH] fix(android): defaults tcc con -nostdlib en bionic
+
+tcc_add_runtime anade -lc buscando /usr/lib (inexistentes en Termux);
+el default de CompileC sin nostdlib fallaba con library 'c' not found
+(medido en dispositivo con 0005 activo). Los defaults zig-era 1.2.13
+ya pasaban -nostdlib (ffi.zig:1501) y el camino napi de 1.4.2 tambien
+lo usa internamente: alineamos ambos sitios (DEFAULT_TCC_OPTIONS y el
+fallback de CompileC::compile).
+---
+ src/runtime/ffi/ffi_body.rs | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/runtime/ffi/ffi_body.rs b/src/runtime/ffi/ffi_body.rs
+index 73f2322..c938cf6 100644
+--- a/src/runtime/ffi/ffi_body.rs
++++ b/src/runtime/ffi/ffi_body.rs
+@@ -504,6 +504,13 @@ impl CompileC {
+         Ok(())
+     }
+ 
++    // Android/Bionic has no FHS library dirs for libtcc's default `-lc`
++    // probe (tcc_add_runtime), and the Termux port keeps TinyCC in nostdlib
++    // mode — same default the 1.2.13 zig-era port shipped (ffi.zig:1501).
++    #[cfg(target_os = "android")]
++    pub(crate) const DEFAULT_TCC_OPTIONS: &'static str =
++        "-std=c11 -nostdlib -Wl,--export-all-symbols -g -O2";
++    #[cfg(not(target_os = "android"))]
+     pub(crate) const DEFAULT_TCC_OPTIONS: &'static str = "-std=c11 -Wl,--export-all-symbols -g -O2";
+ 
+     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+@@ -622,7 +629,14 @@ impl CompileC {
+             tcc_options_owned = ZBox::from_bytes(tcc_options);
+             &tcc_options_owned
+         } else {
+-            zstr!("-std=c11 -Wl,--export-all-symbols -g -O2")
++            #[cfg(target_os = "android")]
++            {
++                zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols -g -O2")
++            }
++            #[cfg(not(target_os = "android"))]
++            {
++                zstr!("-std=c11 -Wl,--export-all-symbols -g -O2")
++            }
+         };
+ 
+         // TODO: correctly handle invalid user-provided options
+-- 
+2.56.0
+
