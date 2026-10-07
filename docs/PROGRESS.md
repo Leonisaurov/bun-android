@@ -69,18 +69,31 @@ el teléfono tiene ~1.4 GB libres, CI baja el tarball del commit pineado.
 Progreso verificado en 37629973014: cargo `release` compiló 6m22s y el WebKit
 prebuilt se extraído desde `~/.cache/bun-build`; solo moría el upload edge.
 
+## M1 · primer ELF android desde CI propia — CERRADO 2026-10-07
 
-
-- [ ] `ci/build-android.sh` verde en modo `android` (misma receta oficial:
-  `--profile=ci-build --os=linux --arch=aarch64 --abi=android`).
-- [ ] Validationes estáticas: `readelf -h` (ELF64/AArch64, OS/ABI UNIX
-  Android), `readelf -d` NEEDED `libc.so`, sha256.
-- [ ] Riesgos a enfrentar con patches versionados: flags cc-rs en crates
-  `*_sys` (`CC_aarch64_linux_android` et al.), mismatch `__ANDROID_API__`
-  Rust vs C++.
+- [x] `ci/build-android.sh` verde en modo `android` (misma receta oficial:
+  `--profile=ci-build --os=linux --arch=aarch64 --abi=android`, más la
+  desviación `--buildkite=false` heredada de M0).
+- [x] Validationes estáticas: `readelf -h` ELF64/AArch64, `readelf -d`
+  NEEDED `libc.so`, sha256. Nota: `OS/ABI` sale `UNIX - System V` (no
+  `Android`): es lo que produce el toolchain upstream para android; el
+  gate real es que el linker bionic lo cargue en el teléfono (ver abajo).
+- [x] Riesgos cc-rs/`__ANDROID_API__`: **no materializados** — el cross-build
+  pasó en la primera corrida sin patches (`patches/android/` sigue vacío).
 - [ ] Release propia (tarball) vía `workflow_dispatch` (no push).
-- [ ] Cierre en dispositivo: `~/.bun-android/bin/bun --version` ⇒ `1.4.2`
+- [x] Cierre en dispositivo: `~/.bun-android/bin/bun --version` ⇒ `1.4.2`
   rc=0 (no toca `~/.local/bin`).
+
+**Evidencia de cierre**:
+- Run `37635152940` (commit `a40e66b`, 2026-10-07): ninja 1211 targets en
+  10.68 min; `link bun-profile` + `strip bun`; `readelf`: ELF64 / AArch64 /
+  NEEDED `libc.so`; sha256 `5245f48faa50dad2a4b265c7527d0744eace63665869a4ae5db200372b85f209` (288 MB).
+- Dispositivo (Termux, 2026-10-07): `verify-device.sh` instaló el artefacto
+  en `~/.bun-android/bin/bun`, sha256 idéntico al de CI, y
+  `bun --version -> '1.4.2' rc=0`.
+
+Pendiente menor: la release propia se emite cuando el binario merezca ser
+distribuido (tras M2/M3); no bloquea el hito.
 
 ## M2 · smoke real en Bionic
 
