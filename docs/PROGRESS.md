@@ -19,7 +19,13 @@ el teléfono tiene ~1.4 GB libres, CI baja el tarball del commit pineado.
   `ci/validate-source-tree.sh`, `ci/build-android.sh`,
   `scripts/verify-device.sh` (instala solo en `~/.bun-android/bin`).
 - [x] `.github/workflows/build-android.yml` (dispatch: `host-smoke` | `android`).
-- [ ] Cierre: push verde + run M0 dispatcheado.
+- [x] Cierre 2026-10-07: commit `d88f70d` empujado a `Leonisaurov/bun-android`
+  (público, creado vía `gh repo create`); run M0 `host-smoke` dispatcheado:
+  https://github.com/Leonisaurov/bun-android/actions/runs/37624652911.
+  Desviación documentada: source por tarball pineado en CI (no submodule local)
+  por el disco del teléfono (~1.4 GB libres); recipes de toolchain copiadas del
+  `.buildkite/Dockerfile` del commit pineado (bun host 1.3.13, node 24.3.0,
+  NDK r27c recortado, symlinks compiler-rt/libunwind).
 
 ## M0 · CI de toolchain verde + smoke host
 
