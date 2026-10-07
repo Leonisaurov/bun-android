@@ -1,0 +1,31 @@
+From 3920d2d932c3efb9a598ad4676728c4c817c6599 Mon Sep 17 00:00:00 2001
+From: Leonisaurov <leonisaurov@gmail.com>
+Date: Wed, 7 Oct 2026 09:31:28 -0600
+Subject: [PATCH] feat(android): reactivar ENABLE_TINYCC en codegen Rust para
+ bionic
+
+El gate de TinyCC es doble: config.ts (dep build) y buildOptionsRs.ts
+(pub const ENABLE_TINYCC = !cfg!(any(android, freebsd))), leido por
+src/runtime/ffi/ffi_body.rs para el chequeo de runtime de bun:ffi cc().
+Con 0002 los objetos libtcc ya se compilan y linkean (analogia host
+verificada), pero el constant codegen sigue apagando la ruta en Android;
+se retira solo la linea android, freebsd queda intacto.
+---
+ scripts/build/buildOptionsRs.ts | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/scripts/build/buildOptionsRs.ts b/scripts/build/buildOptionsRs.ts
+index 0ea2c44..03fe5ef 100644
+--- a/scripts/build/buildOptionsRs.ts
++++ b/scripts/build/buildOptionsRs.ts
+@@ -67,7 +67,6 @@ export function generateBuildOptionsRs(cfg: Config): string {
+     "pub const ENABLE_LOGS: bool = cfg!(bun_debug);",
+     "pub const ENABLE_ASAN: bool = cfg!(bun_asan);",
+     "pub const ENABLE_TINYCC: bool = !cfg!(any(",
+-    `    target_os = "android",`,
+     `    target_os = "freebsd",`,
+     "));",
+     "",
+-- 
+2.56.0
+
