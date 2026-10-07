@@ -20,13 +20,18 @@ PY
 
 COMMIT=$(m "upstream.commit")
 SHA256=$(m "upstream.tarball_sha256")
-VERSION=$(m "upstream.tag")
+TAG=$(m "upstream.tag")
 
 cd "$SOURCE_DIR"
 
-[ -f VERSION ] || { echo "source tree has no VERSION file" >&2; exit 1; }
-tree_version=$(cat VERSION)
-[ "$tree_version" = "1.4.2" ] || { echo "expected VERSION 1.4.2, found $tree_version" >&2; exit 1; }
+# The codeload tarball ships no VERSION file; anchor the version on files that
+# only exist at the pinned commit (scripts/build/ is the Rust-era build system).
+[ -f scripts/build/profiles.ts ] || { echo "source tree missing scripts/build/profiles.ts" >&2; exit 1; }
+[ -f scripts/build.ts ] || { echo "source tree missing scripts/build.ts" >&2; exit 1; }
+[ ! -f build.zig ] || { echo "unexpected build.zig (Zig-era tree?) at pinned commit" >&2; exit 1; }
+tag_name=$(grep -o '"ci-build"' scripts/build/profiles.ts | head -1)
+[ -n "$tag_name" ] || { echo "profiles.ts lacks ci-build profile" >&2; exit 1; }
+echo "source anchors OK ($TAG; VERSION file absent by design in tarball)"
 
 # The tarball has no git history; graft the pinned commit as the baseline so
 # patches apply as trackable commits on top of an otherwise clean tree.
@@ -34,7 +39,7 @@ if [ ! -d .git ]; then
     git init -q -b main
     git -c user.email=ci@localhost -c user.name=ci add -A
     git -c user.email=ci@localhost -c user.name=ci \
-        commit -q -m "upstream $VERSION (${COMMIT:0:12}) tarball sha256 ${SHA256:0:12}"
+        commit -q -m "upstream $TAG (${COMMIT:0:12}) tarball sha256 ${SHA256:0:12}"
 fi
 
 shopt -s nullglob
