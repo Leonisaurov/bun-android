@@ -114,13 +114,40 @@ sha256 `5245f48f…`, 2026-10-07):
 
 ## M3 · paridad Termux (parches sobre el stack Rust)
 
-- [ ] SIGSYS `openat2`/`fchmodat2`/`close_range`: medir soporte del kernel
-  5.10 del teléfono antes de parchear; port de los fallbacks del port Zig.
-- [ ] cwd/SD-card Termux (análogo Rust del fix de rutas).
-- [ ] Heap tagging: equivalentes del patrón `android_disable_heap_tagging`
-  (ctor `.init_array`/option mimalloc) + test propio en dispositivo.
-- [ ] TinyCC: reactivar android con el build cruzado portado
-  (`oven-sh/tinycc@29985a3b`) + cierre con NAPI/FFI.
+- [x] SIGSYS `openat2`: medido en el teléfono (rc=159 al servir una ruta de
+  directorio — `Bun.serve` dir-route llamaba `openat2_in_root`). Patch
+  versionado `0001-android-openat2-enosys-fallback.patch` (android → ENOSYS +
+  fallback `openat` en `DirectoryRoute`) → rebuild (run `37638826721`, sha
+  `0cb32a0d…`) → `scripts/verify-sigsys-device.sh` verde en dispositivo
+  (serve 200 "hola-sigsys", spawn, chmod). `fchmodat2`/`close_range`: sin
+  SIGSYS medido (chmod y spawnSync correctos; `bun-spawn` ya cae a su loop).
+- [x] Heap tagging: **no necesario en esta receta** — estresado en dispositivo
+  sin crashes; el ctor `android_disable_heap_tagging` de la era Zig cubría el
+  JSC auto-compilado, y aquí el JSC es el prebuilt oficial de upstream.
+- [x] `epoll_pwait2`: el `bun_epoll_pwait2` de usockets cachea el fallback a
+  `epoll_pwait` ante ENOSYS/E_perm, y en Termux el syscall pasa (fetch/serve
+  verdes desde M2, sin SIGSYS) → sin parche.
+- [x] RLIMIT_NOFILE: Termux trae 32768/32768 (medido en `/proc/self/limits`);
+  el bump a 163840 de la era Zig era para la suite de upstream, no para la
+  paridad de smokes → sin parche, se reconsidera si un workload real lo pide.
+- [ ] cwd/SD-card: `process.cwd()` y escritura en `/storage/emulated/0`
+  correctos sin parche (medido 2026-10-07). Gap de rutas real: con `TMPDIR`
+  ausente, `node:os` tmpdir caía a `/data/local/tmp` (no escribible por el uid
+  de Termux ⇒ mkdtemp EACCES, rojo medido). Patch `0004-android-tmpdir-termux
+  -fallback.patch` (fallback a `/data/data/com.termux/files/usr/tmp`, análogo
+  del `platformTempDir` zig-era) + `scripts/verify-tmpdir-device.sh`; evidencia
+  en dispositivo pendiente del rebuild. Nota: el shim `BUN_NODE_DIR` de
+  `bun run` queda en `/data/local/tmp` en builds android (solo afecta si un
+  script invoca `node` sin node en PATH; fuera del alcance de los smokes).
+- [ ] TinyCC: gate doble descubierto — (a) `config.ts`/`deps/tinycc.ts`
+  (patch `0002`, habilita el build DirectBuild: fetch + codegen `tccdefs_.h` +
+  10 objetos linkeados; la "anomalía" de edges ausentes era truncado del log
+  de Actions, verificado por gaps de numeración), (b) `ENABLE_TINYCC` generado
+  en `buildOptionsRs.ts` (apagaba la ruta runtime de `bun:ffi cc()` pese a
+  0002). Patch `0003-android-enable-tinycc-codegen.patch` retira solo la linea
+  `target_os = "android"`. Pin upstream del crate tinycc: `oven-sh/tinycc
+  @05f0fafaa3be` (no el 29985a3b zig-era). Pendiente: run android con
+  0003+0004 → `scripts/verify-tinycc-device.sh` en el teléfono.
 - [ ] Cierre: cada sub-hito con commit + evidencia en el teléfono.
 
 ## M4 · standalone 1.4.2 (proyecto aparte, no planeado aquí)
