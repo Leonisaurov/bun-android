@@ -1,0 +1,8 @@
+# Build outputs and local state never live in this repo.
+build/
+source/
+*.log
+.DS_Store
+# Upstream source is fetched by CI (tarball of the pinned commit); nothing is
+# vendored locally because the device disk is tight.
+vendor/

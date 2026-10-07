@@ -1,0 +1,118 @@
+name: build-android
+run-name: "bun-android ${{ inputs.mode }}"
+
+"on":
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "host-smoke = toolchain + linux-x64 recipe smoke (M0); android = cross-build ELF (M1)"
+        type: choice
+        required: true
+        default: host-smoke
+        options:
+          - host-smoke
+          - android
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bun-android-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      MODE: ${{ inputs.mode }}
+    steps:
+      - name: Checkout side project
+        uses: actions/checkout@v4
+
+      - name: Purge disk
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+              /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo docker system prune -af >/dev/null 2>&1 || true
+          df -h / "$RUNNER_TEMP" || true
+
+      - name: Cache toolchain
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/toolchain
+            ~/.rustup
+            ~/.cargo
+          key: ${{ runner.os }}-ci-cache-v1-toolchain-${{ hashFiles('ci/source-manifest.json', 'ci/setup-runner.sh', 'ci/link-ndk-runtimes.sh') }}
+
+      - name: Cache JSC prebuilt + dep downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bun-build
+          key: ${{ runner.os }}-ci-cache-v1-jsc-${{ hashFiles('ci/source-manifest.json') }}
+
+      - name: Setup runner toolchain
+        run: bash ci/setup-runner.sh
+
+      - name: Link NDK runtimes into clang resource dir
+        run: bash ci/link-ndk-runtimes.sh
+
+      - name: Fetch pinned upstream source
+        run: |
+          set -euo pipefail
+          url=$(python3 -c "import json;print(json.load(open('ci/source-manifest.json'))['upstream']['tarball_url'])")
+          sha=$(python3 -c "import json;print(json.load(open('ci/source-manifest.json'))['upstream']['tarball_sha256'])")
+          curl -fsSL --retry 3 --retry-all-errors "$url" -o "$RUNNER_TEMP/src.tar.gz"
+          echo "$sha  $RUNNER_TEMP/src.tar.gz" | sha256sum -c -
+          mkdir -p source
+          tar -xzf "$RUNNER_TEMP/src.tar.gz" -C source --strip-components=1
+
+      - name: Validate source tree + apply versioned patches
+        run: bash ci/validate-source-tree.sh source
+
+      - name: Install JS deps
+        working-directory: source
+        run: bun install --frozen-lockfile
+
+      - name: Host build smoke (linux-x64, recipe validation)
+        if: inputs.mode == 'host-smoke'
+        working-directory: source
+        run: |
+          set -euo pipefail
+          # --lto=false only for the host smoke: it validates the scripts/build.ts
+          # pipeline (configure, deps, cargo, link) faster. The android lane
+          # uses upstream defaults untouched.
+          node --experimental-strip-types scripts/build.ts \
+            --profile=ci-build --os=linux --arch=x64 --lto=false \
+            --cache-dir "$HOME/.cache/bun-build"
+          BIN=$(find build -maxdepth 3 -type f \( -name 'bun' -o -name 'bun-profile' \) -perm -u+x | head -n1)
+          test -n "$BIN"
+          "$BIN" --version
+          echo "host artifact: $BIN"
+
+      - name: Android cross-build (M1)
+        if: inputs.mode == 'android'
+        run: SOURCE_DIR="$GITHUB_WORKSPACE/source" bash ci/build-android.sh
+
+      - name: Upload android artifact
+        if: inputs.mode == 'android'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-aarch64-android
+          path: ${{ runner.temp }}/bun-aarch64-android
+
+      - name: Step summary
+        if: always()
+        env:
+          TOOL_CACHE_HIT: ${{ steps.cache-toolchain.outputs.cache-hit }}
+        run: |
+          {
+            echo "## bun-android ${MODE}"
+            echo "- toolchain cache hit: ${TOOL_CACHE_HIT:-unknown}"
+            echo "- source pin: $(python3 -c "import json;print(json.load(open('ci/source-manifest.json'))['upstream']['commit'])" 2>/dev/null || echo '?')"
+            command -v clang >/dev/null && echo "- clang: $(clang --version | head -1)"
+            command -v rustc >/dev/null && echo "- rustc: $(rustc --version)"
+          } >> "$GITHUB_STEP_SUMMARY"

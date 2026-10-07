@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "upstream": {
+    "repo": "oven-sh/bun",
+    "tag": "bun-v1.4.2",
+    "commit": "744846f844374847c902b5e7fd59b4342a51ef99",
+    "tarball_url": "https://codeload.github.com/oven-sh/bun/tar.gz/744846f844374847c902b5e7fd59b4342a51ef99",
+    "tarball_sha256": "25e09a8804535b8fbea1dad9f95af8402fc9133d28127d5594ff00df1549590e",
+    "note": "CI downloads this tarball (device disk is ~1.4 GB free; no local submodule checkout)."
+  },
+  "webkit": {
+    "repo": "oven-sh/WebKit",
+    "version": "2e2aa2290fac856d6f451ceacb58f7f5b44dd057",
+    "release_tag": "autobuild-2e2aa2290fac856d6f451ceacb58f7f5b44dd057",
+    "android_arm64_asset": "bun-webkit-linux-arm64-android.tar.gz",
+    "android_arm64_size": 472343557,
+    "android_arm64_sha256": "2a25506ca6fadea5d5ee3f36e2c1bea137ad88827736bab967e695b2b319fa0e",
+    "note": "JSC is never compiled here; scripts/build/deps/webkit.ts fetches the prebuilt into --cache-dir. Pins are for cache validation and drift detection."
+  },
+  "tools": {
+    "ndk": "r27c",
+    "ndk_url": "https://dl.google.com/android/repository/android-ndk-r27c-linux.zip",
+    "llvm": "21.1.8",
+    "cmake": "3.30.5",
+    "cmake_url": "https://github.com/Kitware/CMake/releases/download/v3.30.5/cmake-3.30.5-linux-x86_64.sh",
+    "node": "24.3.0",
+    "node_url": "https://nodejs.org/dist/v24.3.0/node-v24.3.0-linux-x86_64.tar.xz",
+    "bun_host": "1.3.13",
+    "bun_host_url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.13/bun-linux-x64.zip",
+    "rust": "nightly-2026-07-20"
+  },
+  "android": {
+    "target": "aarch64-linux-android",
+    "api_level": 28,
+    "note": "ANDROID_API_LEVEL_DEFAULT=28 upstream; not overridable via scripts/build.ts CLI fields (androidApiLevel is a config field, default applies). Official JSC prebuilt is compiled against android28."
+  },
+  "official_android_release": {
+    "asset": "bun-linux-aarch64-android.zip",
+    "size": 35154316,
+    "sha256": "a1c7e2983f1bb65146beb256a4d72449f23042412bc2cf278aa6397ba27e0274",
+    "note": "Reference only: the official 1.4.2 android asset was validated on this phone 2026-10-06. This project builds from source with Termux fixes."
+  },
+  "local_repo_deviation": {
+    "source": "tarball-fetch in CI instead of a locally initialized submodule (device disk constraint), documented in README",
+    "patches": "patches/android/*.patch applied with git am over the pinned tree; never a dirty checkout"
+  }
+}
