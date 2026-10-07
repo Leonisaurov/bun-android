@@ -112,7 +112,7 @@ sha256 `5245f48f…`, 2026-10-07):
   `1 package installed [136.00ms]` ⇒ `RC_INSTALL=0`; `bun run use.mjs` ⇒
   `ms(1000): 1s`, `RC_USE=0`.
 
-## M3 · paridad Termux (parches sobre el stack Rust)
+## M3 · paridad Termux (parches sobre el stack Rust) — CERRADO 2026-10-07
 
 - [x] SIGSYS `openat2`: medido en el teléfono (rc=159 al servir una ruta de
   directorio — `Bun.serve` dir-route llamaba `openat2_in_root`). Patch
@@ -161,11 +161,20 @@ sha256 `5245f48f…`, 2026-10-07):
   también lo usa internamente — patch `0006` alinea los dos sitios de
   `CompileC` (`DEFAULT_TCC_OPTIONS` y el fallback de `compile()`). Pin
   upstream del crate tinycc: `oven-sh/tinycc@05f0fafaa3be` (no el 29985a3b
-  zig-era). Pendiente: run `37652505142` → `scripts/verify-tinycc-device.sh`
-  en el teléfono. Limitación portada (igual que zig-era): sin stdlib, código
-  C que referencie símbolos libc requiere resolución adicional; fuera del
+  zig-era). **Verde en dispositivo 2026-10-07** con run `37652505142`
+  (patches 0001–0006; sha artifact `899866c5…`, revisión
+  `1.4.2-canary.1+c23b9c226`): `verify-tinycc-device.sh` ⇒ `cc add3(1,2,3)
+  = 6`, rc=0. Limitación portada (igual que zig-era): sin stdlib, código C
+  que referencie símbolos libc requiere resolución adicional; fuera del
   smoke de paridad.
-- [ ] Cierre: cada sub-hito con commit + evidencia en el teléfono.
+- [x] Cierre 2026-10-07: seis patches versionados (`0001` openat2, `0002`
+  tinycc config/defines, `0003` ENABLE_TINYCC codegen, `0004` tmpdir Termux,
+  `0005` tcc_externs reales, `0006` tcc -nostdlib) aplicados por CI con
+  `git am`. Batería completa en el teléfono con `899866c5…` sin regresiones:
+  `verify-sigsys` OK (serve 200/spawn/chmod), `verify-tmpdir` OK,
+  `verify-tinycc` OK, y smokes M2 repetidos — `fetch` 200, `bun:sqlite`
+  `select 40+2` ⇒ 42, `bun add ms` ⇒ ms@2.1.3 y `ms(1000)` ⇒ `1s`. Binario
+  instalado solo en `~/.bun-android/bin` (no toca `~/.local/bin`).
 
 ## M4 · standalone 1.4.2 (proyecto aparte, no planeado aquí)
 
