@@ -63,9 +63,13 @@ if [ ${#need_pkgs[@]} -gt 0 ]; then
 fi
 
 # ---------- cmake ----------
+# Binary tar.gz distribution, NOT the Kitware self-extractor .sh: the
+# self-extractor dies with "can't cd to <prefix>" when extracting under
+# $TOOL_HOME on the runner (M0 run 37624652911).
 if ! { done_ cmake && cmake_ok; }; then
-    fetch "$(m "tools.cmake_url")" /tmp/cmake.sh
-    sh /tmp/cmake.sh --skip-license --prefix="$TOOL_HOME/cmake"
+    fetch "$(m "tools.cmake_url")" /tmp/cmake.tar.gz
+    mkdir -p "$TOOL_HOME/cmake"
+    tar -xzf /tmp/cmake.tar.gz -C "$TOOL_HOME/cmake" --strip-components=1
     mark_ cmake
 fi
 
