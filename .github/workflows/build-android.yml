@@ -85,7 +85,10 @@ jobs:
           # --lto=false only for the host smoke: it validates the scripts/build.ts
           # pipeline (configure, deps, cargo, link) faster. The android lane
           # uses upstream defaults untouched.
-          node --experimental-strip-types scripts/build.ts \
+          # Upstream's builder refuses Node < 25 for codegen ("Node 24.3.0
+          # cannot run the codegen scripts ... or run the build with bun");
+          # the documented entry is `bun scripts/build.ts`.
+          bun scripts/build.ts \
             --profile=ci-build --os=linux --arch=x64 --lto=false \
             --cache-dir "$HOME/.cache/bun-build"
           BIN=$(find build -maxdepth 3 -type f \( -name 'bun' -o -name 'bun-profile' \) -perm -u+x | head -n1)

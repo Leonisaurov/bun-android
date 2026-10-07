@@ -22,7 +22,9 @@ find_built_bun() {
     find build -maxdepth 3 -type f \( -name 'bun' -o -name 'bun-profile' \) -perm -u+x | head -n1
 }
 
-node --experimental-strip-types scripts/build.ts \
+# Upstream's builder requires Node >= 25 for codegen; the documented entry
+# point on CI is `bun scripts/build.ts` with the pinned host bun.
+bun scripts/build.ts \
     --profile=ci-build --os=linux --arch=aarch64 --abi=android \
     --android-ndk="$ANDROID_NDK_ROOT" --cache-dir="$CACHE_DIR" "$@"
 
