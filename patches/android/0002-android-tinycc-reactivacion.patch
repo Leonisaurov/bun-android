@@ -1,0 +1,60 @@
+From 4f512a088b2b3e2f3b3b7e9ab191b94e382b4ea0 Mon Sep 17 00:00:00 2001
+From: bun-android <ci@local>
+Date: Wed, 7 Oct 2026 08:47:57 -0600
+Subject: [PATCH] feat(android): reactivar TinyCC para bionic con los defines
+ del port zig-era
+
+config.ts: tinycc default ya no excluye android (era "no upstream bionic
+support"; el port 1.2.13 de opencode-termux cross-build libtcc.a contra
+el NDK y corria bun:ffi cc() en el telefono). deps/tinycc.ts: define
+CONFIG_TCCDIR=/data/data/com.termux/files/usr/lib/tcc y
+CONFIG_TCC_CROSSPREFIX="", igual que el config.h de build-tinycc.sh
+zig-era; el backend ELF arm64 es ajen a la libc.
+
+Puerto de opencode-termux/bun/scripts/build-tinycc.sh al stack Rust de
+bun-v1.4.2 (744846f84437).
+---
+ scripts/build/config.ts      | 8 +++++---
+ scripts/build/deps/tinycc.ts | 7 +++++++
+ 2 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/scripts/build/config.ts b/scripts/build/config.ts
+index 671839b..3517876 100644
+--- a/scripts/build/config.ts
++++ b/scripts/build/config.ts
+@@ -888,9 +888,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
+   // failure is loud ("cannot find -l:libatomic.a") and the fix is obvious.
+   const staticLibatomic = partial.staticLibatomic ?? true;
+ 
+-  // TinyCC: off on Android (no upstream bionic support; FFI cc() falls back
+-  // to dlopen-only) and FreeBSD (oven-sh/tinycc has no FreeBSD target).
+-  const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
++  // TinyCC: off on FreeBSD (oven-sh/tinycc has no FreeBSD target).
++  // bun-android side project re-enables Android: libtcc's arm64 ELF backend
++  // is libc-agnostic and the zig-era port (opencode-termux) shipped
++  // bionic-built libtcc.a running bun:ffi cc() on-device.
++  const tinycc = partial.tinycc ?? !freebsd;
+ 
+   const valgrind = partial.valgrind ?? false;
+   const fuzzilli = partial.fuzzilli ?? false;
+diff --git a/scripts/build/deps/tinycc.ts b/scripts/build/deps/tinycc.ts
+index 7fa186c..baf3615 100644
+--- a/scripts/build/deps/tinycc.ts
++++ b/scripts/build/deps/tinycc.ts
+@@ -57,6 +57,13 @@ export const tinycc: Dependency = {
+       // driver) so we leave it at the default.
+     }
+     if (cfg.windows) defines.CONFIG_WIN32 = true;
++    if (cfg.abi === "android") {
++      // Same defines the zig-era Termux port used for libtcc.a: keep the
++      // generic ELF arm64 backend, but pin the runtime lookup dir to the
++      // Termux prefix (tcc's default paths assume FHS) and no cross-prefix.
++      defines.CONFIG_TCC_CROSSPREFIX = "";
++      defines.CONFIG_TCCDIR = "/data/data/com.termux/files/usr/lib/tcc";
++    }
+ 
+     const spec: DirectBuild = {
+       kind: "direct",
+-- 
+2.56.0
+
