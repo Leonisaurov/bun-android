@@ -1,6 +1,6 @@
 // T6 · bun:ffi y TinyCC en Bionic: la cadena de gates 0002/0003/0005/0006, mas
 // el ABI aarch64 real (ptr, i64, f64) y las limitaciones portadas a proposito.
-import { cc, dlopen, FFIType, ptr } from "bun:ffi";
+import { cc, dlopen, FFIType, JSCallback, ptr } from "bun:ffi";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { assert, caseMain, CASE_DIR, eq, skip } from "./lib.mjs";
@@ -70,22 +70,20 @@ const cases = {
       "typedef int (*cb_t)(int);\n" +
       "int apply_twice(cb_t f, int x) { return f(f(x)); }\n");
     const lib = cc({ source: src, symbols: { apply_twice: { returns: "i32", args: ["ptr", "i32"] } } });
-    let Ctor;
-    try {
-      Ctor = require("bun:ffi").JSCallback;
-    } catch (e) {
-      skip("bun:ffi no expone JSCallback en este binario: " + e.message);
-    }
-    if (!Ctor) skip("sin JSCallback disponible");
+    // 1.4.x invierte el orden del constructor: `new JSCallback(cb, options)` y
+    // el puntero nativo se expone en `.ptr`. Con el orden viejo (options, cb)
+    // lanza "Expected callback function"; es un builtin de JS del runtime, no
+    // codigo parcheado por nosotros.
     let cb;
     try {
-      cb = new Ctor({ args: ["i32"], returns: "i32" }, (x) => x + 1);
+      cb = new JSCallback((x) => x + 1, { args: ["i32"], returns: "i32" });
     } catch (e) {
-      skip("JSCallback no se pudo construir: " + e.message);
+      skip("JSCallback no se pudo construir en este runtime: " + e.message);
     }
-    const fnptr = cb.pointer ?? cb.ptr ?? ptr(cb);
+    const fnptr = cb.ptr;
+    assert(typeof fnptr === "number" && fnptr > 0, "el callback expone un puntero numerico: " + fnptr);
     eq(lib.symbols.apply_twice(fnptr, 40), 42, "C llama de vuelta a JS (callback ABI)");
-    cb.close?.();
+    cb.close();
   },
 
   cc_libc_reference_limitation: () => {

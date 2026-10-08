@@ -5,16 +5,19 @@ import crypto from "node:crypto";
 import { EventEmitter, once, on as evOn } from "node:events";
 import {
   chmodSync,
+  cpSync,
   createWriteStream,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   watch,
   writeFileSync,
   promises as fsp,
@@ -26,7 +29,7 @@ import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import util from "node:util";
 import { Worker } from "node:worker_threads";
-import { assert, caseMain, CASE_DIR, eq, skip, withTimeout } from "./lib.mjs";
+import { assert, caseMain, CASE_DIR, eq, selfSignedCert, skip, withTimeout } from "./lib.mjs";
 
 const P = (...p) => path.join(CASE_DIR, ...p);
 
@@ -277,6 +280,167 @@ const cases = {
     proc.kill("SIGUSR1");
     const code = await withTimeout(10000, () => proc.exited);
     eq(code, 0, "el handler de SIGUSR1 debe correr y exitar 0");
+  },
+
+  // --- agregados A2 (sonda de paridad: identico en bun oficial linux-x64 1.4.2) ---
+  node_net_tcp_echo: async () => {
+    const net = await import("node:net");
+    const srv = net.createServer((sk) => sk.on("data", (b) => sk.write("eco:" + b)));
+    await withTimeout(8000, () => new Promise((res, rej) => {
+      srv.listen(0, "127.0.0.1", res); srv.on("error", rej);
+    }));
+    const port = srv.address().port;
+    try {
+      const got = await withTimeout(10000, () => new Promise((res, rej) => {
+        const c = net.connect(port, "127.0.0.1", () => c.write("hola"));
+        c.once("data", (b) => { res(b.toString()); c.end(); });
+        c.once("error", (e) => rej(new Error("client: " + e.message)));
+      }));
+      eq(got, "eco:hola", "echo TCP por node:net");
+    } finally { srv.close(); }
+  },
+
+  node_dgram_udp_echo: async () => {
+    const dgram = await import("node:dgram");
+    const srv = dgram.createSocket("udp4");
+    srv.on("message", (msg, ri) => srv.send(Buffer.from("udp:" + msg), ri.port, ri.address));
+    await withTimeout(8000, () => new Promise((res, rej) => {
+      srv.bind(0, "127.0.0.1", res); srv.on("error", rej);
+    }));
+    const port = srv.address().port;
+    try {
+      const cli = dgram.createSocket("udp4");
+      const got = await withTimeout(10000, () => new Promise((res, rej) => {
+        cli.once("message", (m) => res(m.toString()));
+        cli.once("error", (e) => rej(new Error("cli: " + e.message)));
+        cli.send(Buffer.from("ping"), port, "127.0.0.1");
+      }));
+      cli.close();
+      eq(got, "udp:ping", "datagrama UDP ida y vuelta");
+    } finally { srv.close(); }
+  },
+
+  node_tls_server_and_client: async () => {
+    // Cert efimero del propio caso (ver lib.mjs selfSignedCert): la verificacion
+    // se ejercita fijando ESTA ca, no desactivandola.
+    const { key, cert } = selfSignedCert();
+    const tls = await import("node:tls");
+    const { readFileSync: rd } = await import("node:fs");
+    const srv = tls.createServer({ key: rd(key), cert: rd(cert) },
+      (sk) => sk.on("data", (b) => sk.write("tls:" + b)));
+    await withTimeout(8000, () => new Promise((res, rej) => {
+      srv.listen(0, "127.0.0.1", res); srv.on("error", rej);
+    }));
+    const port = srv.address().port;
+    try {
+      const got = await withTimeout(15000, () => new Promise((res, rej) => {
+        const c = tls.connect({ host: "127.0.0.1", port, ca: rd(cert, "utf8"),
+          servername: "localhost" }, () => c.write("hola"));
+        c.once("data", (b) => { res(b.toString()); c.end(); });
+        c.once("error", (e) => rej(new Error("handshake: " + e.message)));
+      }));
+      eq(got, "tls:hola", "handshake TLS con la CA del caso fijada");
+    } finally { srv.close(); }
+  },
+
+  worker_sharedarraybuffer_atomics: async () => {
+    const wsrc = P("worker-sab.mjs");
+    writeFileSync(wsrc, "import { parentPort } from 'node:worker_threads';\n" +
+      "parentPort.on('message', (sab) => { const v = new Int32Array(sab);\n" +
+      "Atomics.wait(v, 0, 0, 5000); parentPort.postMessage(String(Atomics.load(v, 0))); });\n");
+    const sab = new SharedArrayBuffer(16);
+    const v = new Int32Array(sab);
+    const w = new Worker(wsrc);
+    try {
+      const got = await withTimeout(15000, () => new Promise((res, rej) => {
+        w.once("message", (m) => res(String(m)));
+        w.once("error", (e) => rej(new Error("worker: " + e.message)));
+        w.postMessage(sab);
+        setTimeout(() => { Atomics.store(v, 0, 77); Atomics.notify(v, 0); }, 150);
+      }));
+      eq(got, "77", "Atomics.notify despierta el wait del worker");
+    } finally { await w.terminate(); }
+  },
+
+  broadcast_channel_main_y_worker: async () => {
+    // El worker tiene que registrar su listener ANTES de que el main postee:
+    // sin esa sincronia el mensaje se pierde (medido: sin "listo" el caso cuelga).
+    const wsrc = P("worker-bc.mjs");
+    writeFileSync(wsrc, "import { parentPort } from 'node:worker_threads';\n" +
+      "const bc = new BroadcastChannel('bateria-bc');\n" +
+      "bc.addEventListener('message', (e) => bc.postMessage('eco:' + e.data));\n" +
+      "parentPort.postMessage('listo');\n");
+    const w = new Worker(wsrc);
+    const bc = new BroadcastChannel("bateria-bc");
+    try {
+      const got = await withTimeout(15000, () => new Promise((res, rej) => {
+        w.once("message", (m) => { if (m === "listo") bc.postMessage("hola-bc"); });
+        w.once("error", (e) => rej(new Error("worker: " + e.message)));
+        bc.addEventListener("message", (e) => res(e.data));
+      }));
+      eq(got, "eco:hola-bc", "BroadcastChannel cruza main <-> worker");
+    } finally { bc.close(); await w.terminate(); }
+  },
+
+  module_create_require_rutas: async () => {
+    const { createRequire } = await import("node:module");
+    writeFileSync(P("lib-a2.cjs"), "module.exports = { tag: 'cjs-a2' };\n");
+    const req = createRequire(path.join(CASE_DIR, "main.mjs"));
+    const m = req(P("lib-a2.cjs"));
+    eq(m.tag, "cjs-a2", "createRequire con ruta absoluta resuelve CJS");
+    let fallo = null;
+    try { req(P("no-existe.cjs")); } catch (e) { fallo = e.code; }
+    eq(fallo, "MODULE_NOT_FOUND", "modulo ausente da MODULE_NOT_FOUND, no crash");
+  },
+
+  readline_interfaz_sobre_stdin: () => {
+    const p = Bun.spawnSync({
+      cmd: [process.execPath, "-e",
+        'const rl = require("node:readline").createInterface({ input: process.stdin });\n' +
+        "let n = 0; rl.on(\"line\", (l) => { n++; if (l === \"FIN\") { console.log(\"lineas=\" + n); rl.close(); } });\n"],
+      cwd: CASE_DIR, stdout: "pipe", stderr: "pipe",
+      stdin: new TextEncoder().encode("uno\ndos ñ\nFIN\n"),
+    });
+    eq(p.exitCode, 0, "rc del hijo con readline: " + p.stderr.toString().slice(0, 200));
+    eq(p.stdout.toString().trim(), "lineas=3", "readline emitio cada linea");
+  },
+
+  fs_cp_recursive_y_readdir_recursive: () => {
+    const base = P("arbol-a2"), dst = P("arbol-a2-copia");
+    mkdirSync(path.join(base, "a/b"), { recursive: true });
+    writeFileSync(path.join(base, "a/b/hondo.txt"), "hondo");
+    writeFileSync(path.join(base, "a/orig.txt"), "orig");
+    try { unlinkSync(path.join(base, "a/enlace.txt")); } catch {}
+    symlinkSync("orig.txt", path.join(base, "a/enlace.txt"));
+    cpSync(base, dst, { recursive: true });
+    const names = readdirSync(dst, { recursive: true, encoding: "utf8" }).map(String);
+    assert(names.some((n) => n.replace(/\\/g, "/").endsWith("b/hondo.txt")),
+      "readdir recursive ve el fondo: " + names.slice(0, 5).join(","));
+    eq(readFileSync(path.join(dst, "a/enlace.txt"), "utf8"), "orig", "el symlink se resuelve tras cp");
+    rmSync(base, { recursive: true, force: true });
+    rmSync(dst, { recursive: true, force: true });
+  },
+
+  zlib_gzip_stream_a_archivo: async () => {
+    const zlib = await import("node:zlib");
+    const { Readable, pipeline, Transform } = await import("node:stream");
+    const src = "ñ".repeat(200000);
+    const gz = P("a2.gz");
+    await withTimeout(20000, () => new Promise((res, rej) => {
+      pipeline(Readable.from([Buffer.from(src, "utf8")]), zlib.createGzip(),
+        createWriteStream(gz), (e) => (e ? rej(new Error("pipeline: " + e.message)) : res()));
+    }));
+    const n = statSync(gz).size;
+    assert(n > 0 && n < 20000, "gzip comprimi de verdad: " + n + "B");
+    const back = zlib.gunzipSync(readFileSync(gz)).toString("utf8");
+    eq(back.length, src.length, "ida y vuelta por stream conserva el largo UTF-8");
+    const a = new Transform({ transform(c, _, cb) { cb(null, Buffer.from("X" + c)); } });
+    const chunks = [];
+    await withTimeout(10000, () => new Promise((res, rej) => {
+      a.on("data", (c) => chunks.push(c)); a.on("end", res); a.on("error", rej);
+      a.end(Buffer.from("abc"));
+    }));
+    eq(Buffer.concat(chunks).toString(), "Xabc", "Transform custom por stream");
   },
 };
 

@@ -1,10 +1,3 @@
-# Manifiesto de la bateria en dispositivo (scripts/battery-device.sh).
-# Formato: TIER|archivo|caso|timeout_s|expect
-#   expect=PASS  -> debe exitar 0 (o informar #SKIP: prerequisito ausente)
-#   expect=KNOWN -> se ESPERA que falle: es una limitacion portada y medida,
-#                   documentada en docs/KNOWN-ISSUES.md. Si pasa, la bateria lo
-#                   grita como UNEXPECTED, porque tambien es noticia.
-# Cada caso corre en su propio proceso, con cwd = scratch del caso.
 T1|t1-cli.mjs|version_flag|30|PASS
 T1|t1-cli.mjs|revision_flag|30|PASS
 T1|t1-cli.mjs|eval_print|30|PASS
@@ -21,6 +14,8 @@ T1|t1-cli.mjs|esm_and_cjs_interop|30|PASS
 T1|t1-cli.mjs|package_json_type_module|30|PASS
 T1|t1-cli.mjs|env_inherited_and_isolated|30|PASS
 T1|t1-cli.mjs|stdout_to_file_and_pipe|60|PASS
+T1|t1-cli.mjs|spawn_argv0_override|60|PASS
+T1|t1-cli.mjs|spawn_stdout_to_bun_file|60|PASS
 T2|t2-node.mjs|fs_symlink_and_realpath|30|PASS
 T2|t2-node.mjs|fs_watch_event|30|PASS
 T2|t2-node.mjs|fs_rename_and_metadata|30|PASS
@@ -39,6 +34,15 @@ T2|t2-node.mjs|node_crypto_deep|60|PASS
 T2|t2-node.mjs|util_and_events_extras|30|PASS
 T2|t2-node.mjs|string_decoder_and_buffers|30|PASS
 T2|t2-node.mjs|process_signals_handler|60|PASS
+T2|t2-node.mjs|node_net_tcp_echo|60|PASS
+T2|t2-node.mjs|node_dgram_udp_echo|60|PASS
+T2|t2-node.mjs|node_tls_server_and_client|120|PASS
+T2|t2-node.mjs|worker_sharedarraybuffer_atomics|90|PASS
+T2|t2-node.mjs|broadcast_channel_main_y_worker|60|PASS
+T2|t2-node.mjs|module_create_require_rutas|30|PASS
+T2|t2-node.mjs|readline_interfaz_sobre_stdin|60|PASS
+T2|t2-node.mjs|fs_cp_recursive_y_readdir_recursive|60|PASS
+T2|t2-node.mjs|zlib_gzip_stream_a_archivo|90|PASS
 T3|t3-http.mjs|serve_tcp_get|60|PASS
 T3|t3-http.mjs|serve_ipv6_loopback|60|PASS
 T3|t3-http.mjs|serve_post_echo_and_headers|60|PASS
@@ -55,6 +59,9 @@ T3|t3-http.mjs|fetch_concurrent_keepalive|90|PASS
 T3|t3-http.mjs|fetch_binary_and_unicode_roundtrip|60|PASS
 T3|t3-http.mjs|fetch_https_tls|60|PASS
 T3|t3-http.mjs|bun_connect_tcp_echo|60|PASS
+T3|t3-http.mjs|serve_tls_con_ca_fijada|150|PASS
+T3|t3-http.mjs|serve_tls_rechaza_selfsigned_sin_ca|150|PASS
+T3|t3-http.mjs|fetch_lee_un_sse_stream|60|PASS
 T4|t4-storage.mjs|sqlite_file_persistence|30|PASS
 T4|t4-storage.mjs|sqlite_wal_two_connections|30|PASS
 T4|t4-storage.mjs|sqlite_transaction_rollback|30|PASS
@@ -67,6 +74,8 @@ T4|t4-storage.mjs|bun_hash_stable|30|PASS
 T4|t4-storage.mjs|blob_and_formdata|30|PASS
 T4|t4-storage.mjs|stream_to_file_and_back|60|PASS
 T4|t4-storage.mjs|unlink_and_eperm_paths|30|PASS
+T4|t4-storage.mjs|bun_native_compression_roundtrips|60|PASS
+T4|t4-storage.mjs|file_slice_offset_y_size_en_32mb|150|PASS
 T5|t5-package.mjs|install_direct_dep|300|PASS
 T5|t5-package.mjs|install_transitive_deps|300|PASS
 T5|t5-package.mjs|install_writes_and_honours_lockfile|300|PASS
@@ -77,6 +86,9 @@ T5|t5-package.mjs|build_bun_target_and_run|120|PASS
 T5|t5-package.mjs|build_node_target_output_is_js|120|PASS
 T5|t5-package.mjs|build_minify_smaller_and_correct|120|PASS
 T5|t5-package.mjs|install_then_compile_from_node_modules|420|PASS
+T5|t5-package.mjs|bun_test_runner_pass_fail_rc|90|PASS
+T5|t5-package.mjs|install_frozen_lockfile_and_pm_ls|300|PASS
+T5|t5-package.mjs|run_script_with_preload_and_dotenv|60|PASS
 T6|t6-ffi.mjs|cc_add3_regression|60|PASS
 T6|t6-ffi.mjs|cc_pointer_and_loop|60|PASS
 T6|t6-ffi.mjs|cc_float_and_i64_abi|60|PASS
@@ -102,3 +114,11 @@ T8|t8-termux.mjs|heap_stress_256mb|180|PASS
 T8|t8-termux.mjs|cwd_with_utf8_and_spaces|60|PASS
 T8|t8-termux.mjs|os_tmpdir_matches_prefix_patch|30|PASS
 T8|t8-termux.mjs|process_and_runtime_identity|30|PASS
+T8|t8-termux.mjs|tz_iana_offsets_and_dst|90|PASS
+T8|t8-termux.mjs|sigint_to_child_custom_exit_code|60|PASS
+# T9 · APIs de producto (transpiler, password) y los dos gaps de 1.4.x
+T9|t9-apis.mjs|transpiler_ts_y_tsx_loaders|60|PASS
+T9|t9-apis.mjs|transpiler_minify_y_scan_imports|60|PASS
+T9|t9-apis.mjs|password_bcrypt_y_argon2id|90|PASS
+T9|t9-apis.mjs|eventsource_global_available|30|KNOWN
+T9|t9-apis.mjs|worker_bare_onmessage_global|60|KNOWN

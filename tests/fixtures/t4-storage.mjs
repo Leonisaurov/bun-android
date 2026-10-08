@@ -154,6 +154,44 @@ const cases = {
     try { unlinkSync(P("no-existe.txt")); } catch (e) { threw = e.code; }
     eq(threw, "ENOENT", "unlink de archivo ausente debe ser ENOENT, no un crash");
   },
+
+  // Los `.toString()` de estas salidas NO son texto: gzipSync/deflateSync
+  // devuelven Uint8Array y su toString() es la lista de bytes separados por
+  // coma (medido). Se decodifica con TextDecoder en los dos sentidos.
+  bun_native_compression_roundtrips: () => {
+    const td = new TextDecoder();
+    const src = "bateria-t4-".repeat(4000);
+    const gz = Bun.gzipSync(src, { level: 9 });
+    eq(td.decode(Bun.gunzipSync(gz)), src, "gunzip(gzip) reconstruye el original");
+    assert(gz.length < src.length / 100, "gzip comprime este payload: " + gz.length);
+    const gz1 = Bun.gzipSync(src, { level: 1 });
+    assert(gz1.length > gz.length, "level 1 produce mas bytes que level 9: " + gz1.length + " vs " + gz.length);
+    const df = Bun.deflateSync(src);
+    eq(td.decode(Bun.inflateSync(df)), src, "inflate(deflate) reconstruye");
+    const zs = Bun.zstdCompressSync(src);
+    eq(td.decode(Bun.zstdDecompressSync(zs)), src, "zstd round-trip (libzstd linkado en android)");
+    assert(zs.length < src.length / 100, "zstd comprime: " + zs.length);
+  },
+
+  file_slice_offset_y_size_en_32mb: async () => {
+    const N = 32 * 1024 * 1024;
+    const buf = new Uint8Array(N);
+    for (let i = 0; i < N; i += 1024) buf[i] = (i / 1024) & 0xff;
+    const f = P("grande-32.bin");
+    await Bun.write(f, buf);
+    eq(statSync(f).size, N, "tamano del archivo en disco");
+    const file = Bun.file(f);
+    eq(file.size, N, "Bun.file().size");
+    const off = 4096, len = 8192;
+    const slice = new Uint8Array(await new Response(file.slice(off, off + len)).arrayBuffer());
+    eq(slice.length, len, "longitud del slice pedido");
+    for (let k = 0; k < len; k += 1024) eq(slice[k], buf[off + k], `slice[${off + k}] respeta el offset`);
+    eq(slice[len - 1], buf[off + len - 1], "ultimo byte del slice (fin exclusivo)");
+    const tail = new Uint8Array(await new Response(file.slice(-1024)).arrayBuffer());
+    eq(tail.length, 1024, "slice con inicio negativo: longitud");
+    eq(tail[0], buf[N - 1024], "slice negativo: primer byte");
+    eq(Bun.hash(new Uint8Array(await file.arrayBuffer())), Bun.hash(buf), "hash del archivo completo == hash escrito");
+  },
 };
 
 export default caseMain(cases);

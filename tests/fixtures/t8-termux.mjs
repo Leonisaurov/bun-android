@@ -222,6 +222,41 @@ const cases = {
     assert(existsSync("/proc/self/exe"), "/proc/self/exe existe");
     eq(readlinkSync("/proc/self/exe"), process.execPath, "/proc/self/exe apunta al ejecutable");
   },
+
+  // Bionic busca zoneinfo en /system/usr/share/zoneinfo; si la tabla estuviera
+  // incompleta el offset saldria -0 o UTC. Se mide con zones que tienen DST
+  // opuestas (Europa) y una sin DST hace 15 anios (Argentina).
+  tz_iana_offsets_and_dst: () => {
+    const run = (tz, code) => {
+      const p = self(["-e", code], { env: { ...process.env, TZ: tz } });
+      eq(p.exitCode, 0, `rc con TZ=${tz}: ` + p.stderr.toString().slice(-200));
+      return p.stdout.toString().trim();
+    };
+    const arg = "const d=new Date('2026-07-10T12:00:00Z');console.log(d.getHours()+'/'+new Date('2026-07-10T12:00:00').getTimezoneOffset())";
+    eq(run("America/Argentina/Buenos_Aires", arg), "9/180", "UTC-3 sin DST (convencion JS: offset +180)");
+    const lon = "const a=new Date('2026-07-10T12:00:00Z'),b=new Date('2026-01-10T12:00:00Z');console.log(a.getHours()+'/'+b.getHours())";
+    eq(run("Europe/London", lon), "13/12", "Europe/London con DST en julio y sin DST en enero");
+    const santiago = "const d=new Date('2026-07-10T12:00:00Z');console.log(d.getHours())";
+    eq(run("America/Santiago", santiago), "8", "America/Santiago (UTC-4 en invierno austral)");
+    const fmt = "console.log(new Intl.DateTimeFormat('es-AR',{timeZone:'America/Argentina/Buenos_Aires',hour:'2-digit',minute:'2-digit',timeZoneName:'short'}).format(new Date('2026-07-10T12:00:00Z')))";
+    const out = run("America/Argentina/Buenos_Aires", fmt);
+    assert(/09/.test(out), "Intl formatea la hora local de la zona: " + out);
+    const bad = "try{new Intl.DateTimeFormat('en',{timeZone:'Marte/Inexistente'});console.log('ACEPTO')}catch(e){console.log(e.constructor.name)}";
+    eq(run("UTC", bad), "RangeError", "una zona inexistente se rechaza, no se ignora");
+  },
+
+  sigint_to_child_custom_exit_code: async () => {
+    writeFileSync(P("hijo-sigint.mjs"),
+      'process.on("SIGINT", () => { console.log("hijo-recibio-sigint"); process.exit(3); });\n' +
+      "setTimeout(() => console.log('no-deberia-llegar'), 60000);\n");
+    const p = Bun.spawn({ cmd: [process.execPath, "hijo-sigint.mjs"], cwd: CASE_DIR, stdout: "pipe", stderr: "pipe" });
+    await new Promise((r) => setTimeout(r, 700));
+    p.kill(2);
+    const rc = await withTimeout(15000, () => p.exited);
+    const out = await new Response(p.stdout).text();
+    eq(rc, 3, "rc del hijo que maneja SIGINT y sale con codigo propio");
+    eq(out.trim(), "hijo-recibio-sigint", "el handler corro");
+  },
 };
 
 export default caseMain(cases);

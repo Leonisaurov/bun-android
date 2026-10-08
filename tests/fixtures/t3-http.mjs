@@ -1,6 +1,6 @@
 // T3 · red: Bun.serve sobre TCP real (los verificadores historicos solo cubrian
 // la ruta unix), fetch, TLS, WebSocket, Bun.connect.
-import { assert, caseMain, CASE_DIR, eq, skip, withTimeout } from "./lib.mjs";
+import { assert, caseMain, CASE_DIR, eq, selfSignedCert, skip, withTimeout } from "./lib.mjs";
 
 async function withServer(opts, fn) {
   const server = Bun.serve({ ...opts, port: opts.port ?? 0 });
@@ -274,6 +274,72 @@ const cases = {
       setTimeout(() => { socket.destroy(); clearTimeout(t); resolve("closed"); }, 1500);
     })));
     eq(r, "closed", "conexion TCP cruda abierta y cerrada");
+  },
+
+  // --- agregados A2: TLS de verdad y streaming SSE ---
+  serve_tls_con_ca_fijada: async () => {
+    const { key, cert } = selfSignedCert();
+    const ca = await Bun.file(cert).text();
+    const s = Bun.serve({
+      tls: { key: await Bun.file(key).bytes(), cert: await Bun.file(cert).bytes() },
+      hostname: "127.0.0.1", port: 0, fetch: () => new Response("tls-bun-ok"),
+    });
+    try {
+      // Verificacion ACTIVA: se fija la CA del caso, no se desactiva el chequeo.
+      const r = await withTimeout(15000, () => fetch(`https://127.0.0.1:${s.port}/`,
+        { tls: { ca, serverName: "localhost" } }));
+      eq(r.status, 200, "estado HTTPS");
+      eq(await r.text(), "tls-bun-ok", "body sobre TLS con CA fijada");
+    } finally { s.stop(); }
+  },
+
+  serve_tls_rechaza_selfsigned_sin_ca: async () => {
+    const { key, cert } = selfSignedCert();
+    const s = Bun.serve({
+      tls: { key: await Bun.file(key).bytes(), cert: await Bun.file(cert).bytes() },
+      hostname: "127.0.0.1", port: 0, fetch: () => new Response("no-deberia-llegar"),
+    });
+    try {
+      const err = await withTimeout(15000, () =>
+        fetch(`https://127.0.0.1:${s.port}/`).then(() => null, (e) => String((e && e.message) || e)));
+      assert(err, "un self-signed DEBE rechazarse con la verificacion por defecto");
+      assert(/cert|ssl|tls|verify|handshake|unknown authority/i.test(err),
+        "el error debe ser de verificacion TLS: " + err.slice(0, 90));
+    } finally { s.stop(); }
+  },
+
+  fetch_lee_un_sse_stream: async () => {
+    let interval;
+    const r = await withServer({
+      hostname: "127.0.0.1",
+      fetch() {
+        const stream = new ReadableStream({
+          start(c) {
+            c.enqueue("data: primero\n\n");
+            interval = setInterval(() => c.enqueue("data: tick\n\n"), 60);
+          },
+          cancel() { clearInterval(interval); },
+        });
+        return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+      },
+    }, async (s) => {
+      const res = await withTimeout(12000, () => fetch(`http://127.0.0.1:${s.port}/`));
+      eq(res.headers.get("content-type"), "text/event-stream", "content-type del stream");
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let acc = "";
+      const t0 = Date.now();
+      while (acc.split("data:").length - 1 < 3 && Date.now() - t0 < 8000) {
+        const { value, done } = await withTimeout(9000, () => reader.read());
+        if (done) break;
+        acc += dec.decode(value, { stream: true });
+      }
+      try { reader.cancel(); } catch {}
+      return acc;
+    });
+    clearInterval(interval);
+    assert(r.startsWith("data: primero"), "el primer evento llega primero: " + r.slice(0, 40));
+    assert(r.split("data:").length - 1 >= 3, "el streaming es incremental, no bufferizado: " + r.length + "B");
   },
 };
 

@@ -145,6 +145,28 @@ const cases = {
     eq(lines.length, 20000, "20k lineas por stdout");
     eq(lines[19999], "line19999", "sin truncado al final");
   },
+
+  spawn_argv0_override: async () => {
+    const p = Bun.spawn({
+      cmd: [process.execPath, "-e", 'console.log(process.argv0)'],
+      cwd: CASE_DIR, stdout: "pipe", stderr: "pipe", argv0: "bun-battery-argv0",
+    });
+    const rc = await p.exited;
+    eq(rc, 0, "rc del hijo con argv0 propio");
+    eq(await new Response(p.stdout).text(), "bun-battery-argv0\n", "argv0 llega al hijo");
+  },
+
+  spawn_stdout_to_bun_file: async () => {
+    const out = join(CASE_DIR, "stdout-hijo.txt");
+    const p = Bun.spawn({
+      cmd: [process.execPath, "-e", 'console.log("hijo-a-archivo")'],
+      cwd: CASE_DIR, stdout: Bun.file(out), stderr: "pipe",
+    });
+    const rc = await p.exited;
+    eq(rc, 0, "rc del hijo con stdout a Bun.file");
+    const txt = await Bun.file(out).text();
+    eq(txt, "hijo-a-archivo\n", "el stdout del hijo escrita en el archivo indicado");
+  },
 };
 
 export default caseMain(cases);

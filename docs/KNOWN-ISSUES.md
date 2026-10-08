@@ -28,6 +28,40 @@ como limitación consciente.
   medido: `T5/install_removes_pruned_dep` (expect=KNOWN).
 - **Standalone inflado**: `bun build --compile` embebe el runtime ci-build
   con DWARF (~+190 MB). Ver [`STANDALONE.md`](STANDALONE.md).
+- **`EventSource` no existe en 1.4.x**: `typeof EventSource === "undefined"`
+  en nuestro ELF **y** en el bun 1.4.2 oficial linux-x64 pineado (revision
+  `1.4.2+744846f84`, sha `a83d263767d8…`, job `probe-upstream-parity` run
+  `37776390386`); tampoco estaba en el oráculo android 1.3.14. No es un gap
+  del port sino de la línea 1.4.x ⇒ **sin parche**, y el streaming SSE se
+  verifica por la otra mitad del protocolo (`fetch` + `ReadableStream`, caso
+  `T3/fetch_lee_un_sse_stream`, verde). Caso medido:
+  `T9/eventsource_global_available` (expect=KNOWN).
+- **Handlers globales de `node:worker_threads` ignorados**: un worker que
+  hace `onmessage = (e) => postMessage(...)` sin importar `parentPort` queda
+  **silencioso para siempre** (hang, no error). Mismo hang en el linux-x64
+  oficial 1.4.2 (run `37776390386`); Node 26/22 lanzan `ReferenceError`, y en
+  bun 1.3.x estos handlers sí despachaban. La ruta portable es importar
+  `parentPort` (caso verde `T2/worker_sharedarraybuffer_atomics`).
+  Consecuencia práctica para la batería: los hangs se miden con timeout
+  interno acotado, no con el timeout del runner. Caso medido:
+  `T9/worker_bare_onmessage_global` (expect=KNOWN).
+
+## Semántica medida que sorprende (no son bugs, pero hay que saberlos)
+
+- `Bun.gzipSync`/`deflateSync` devuelven `Uint8Array`, y su `.toString()` es
+  la lista de bytes separada por coma: se decodifica con `TextDecoder`.
+  Byte-idéntico al oráculo 1.3.14 (mismo `len=120` para el mismo payload).
+- `Bun.password.verifySync(user, hash)` con un hash **malformado lanza**
+  `UnsupportedAlgorithm` en vez de devolver `false`; con la clave incorrecta
+  y hash válido devuelve `false`. Igual en 1.3.14.
+- `Bun.Transpiler`: la opción que elige el parser es `loader`, no `lang`
+  (con `lang: "ts"` el input se parsea como jsx y falla). `transform()` es
+  async; `transformSync()` también existe. `scanImports` devuelve
+  `[{kind:"import-statement", path:"./m1"}, …]`.
+- `BroadcastChannel` es un `EventTarget` (no tiene `.once`), y un canal
+  main↔worker pierde el primer mensaje si el listener del worker aún no está
+  registrado: hay que sincronizar (el worker avisa por `parentPort` y recién
+  ahí se postea).
 
 ## Entorno Termux (medido, sin parche necesario)
 

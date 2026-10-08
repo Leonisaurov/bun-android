@@ -180,12 +180,81 @@ await W("fs_cp_recursive_symlink", async () => {
 });
 // 11) Timezone IANA con TZ del proceso (Android usa /system/usr/share/zoneinfo).
 await W("tz_iana_buenos_aires", () => {
+  if (!process.env.TZ) return "TZ no fijada en el ambiente (medir con TZ=America/Argentina/Buenos_Aires)";
   const d = new Date("2026-07-10T12:00:00Z");
   const hh = String(d.getHours()).padStart(2, "0");
   const s = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", timeZoneName: "short" })
     .format(new Date(Date.UTC(2026, 6, 10, 12)));
-  if (hh !== "09") throw new Error(`TZ ambiente no aplicada: getHours=${hh}`);
-  return `getHours=${hh} (UTC-3) | London ${s}`;
+  if (process.env.TZ === "America/Argentina/Buenos_Aires" && hh !== "09") {
+    throw new Error(`TZ ambiente no aplicada: getHours=${hh}`);
+  }
+  return `TZ=${process.env.TZ} getHours=${hh} | London ${s}`;
+});
+// 12) Orden del constructor JSCallback en 1.4.x (lo cambió upstream?).
+await W("jscallback_constructor_order", async () => {
+  if (isNode) throw new Error("solo-bun (bun:ffi)");
+  const { JSCallback } = await import("bun:ffi");
+  const fn = (x) => x + 1;
+  const sig = { args: ["i32"], returns: "i32" };
+  let viejo = "OK", nuevo = "OK", ptrTipo = "?";
+  try { new JSCallback(sig, fn); } catch (e) { viejo = "ROJO:" + String(e.message).slice(0, 40); }
+  let cb = null;
+  try { cb = new JSCallback(fn, sig); ptrTipo = typeof cb.ptr; } catch (e) { nuevo = "ROJO:" + String(e.message).slice(0, 40); }
+  cb?.close?.();
+  return `new(sig,fn)=${viejo} | new(fn,sig)=${nuevo} ptr=${ptrTipo}`;
+});
+// 13) dns.promises.resolve() crudo: cuelga tambien donde SI hay resolv.conf?
+await W("dns_raw_resolve", async () => {
+  const dns = await import("node:dns/promises");
+  const got = await wt(8000, dns.resolve("example.com"));
+  return JSON.stringify(got).slice(0, 60);
+});
+// 14) `bun install` con una dep podada: el lock se limpia (o se borra si queda
+// vacio) pero deja node_modules/<dep> materializada y resoluble. Se mide si
+// eso es conducta de upstream o de nuestro build.
+await W("install_pruned_dep_left_on_disk", async () => {
+  if (isNode) throw new Error("solo-bun (bun install)");
+  const dir = path.join(D, "pp-prune");
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const pkg = (deps) => JSON.stringify({ name: "pp-prune", version: "1.0.0", dependencies: deps }, null, 2);
+  fs.writeFileSync(path.join(dir, "package.json"), pkg({ "is-odd": "3.0.1" }));
+  const i1 = Bun.spawnSync({ cmd: [process.execPath, "install"], cwd: dir, stdout: "pipe", stderr: "pipe" });
+  if (i1.exitCode !== 0) throw new Error("install 1 rc=" + i1.exitCode + " " + i1.stderr.toString().slice(0, 120));
+  const dep = path.join(dir, "node_modules/is-odd");
+  if (!fs.existsSync(dep)) throw new Error("install 1 no materializo la dep (no se puede medir la poda)");
+  fs.writeFileSync(path.join(dir, "package.json"), pkg({}));
+  const i2 = Bun.spawnSync({ cmd: [process.execPath, "install"], cwd: dir, stdout: "pipe", stderr: "pipe" });
+  if (i2.exitCode !== 0) throw new Error("install 2 rc=" + i2.exitCode + " " + i2.stderr.toString().slice(0, 120));
+  const lockFile = ["bun.lock", "bun.lockb"].map((f) => path.join(dir, f)).find((f) => fs.existsSync(f));
+  const lockMenciona = lockFile
+    ? fs.readFileSync(lockFile).toString(lockFile.endsWith(".lock") ? "utf8" : "latin1").includes("is-odd")
+    : false;
+  const sobrevive = fs.existsSync(dep);
+  if (lockMenciona) throw new Error("la dep podada sigue en el lockfile");
+  if (sobrevive) {
+    throw new Error("node_modules/is-odd sigue materializada y resoluble tras la poda " +
+      "(lock: " + (lockFile ? "presente y limpio" : "borrado por estar vacio") + ")");
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+  return "pruned: fuera de lock y de disco";
+});
+// 15) C compilado por tinycc que referencia simbolos libc. Sin #include a
+// proposito: lo que se mide es la RESOLUCION del simbolo, no las cabeceras
+// (nuestro parche 0006 pasa -nostdlib porque Termux no tiene los dirs FHS).
+await W("cc_uses_libc_symbols", async () => {
+  if (isNode) throw new Error("solo-bun (bun:ffi cc)");
+  const { cc } = await import("bun:ffi");
+  const src = path.join(D, "pp-libc.c");
+  fs.writeFileSync(src, "extern unsigned long strlen(const char *);\n" +
+    "int len_of(const char *s) { return (int)strlen(s); }\n");
+  const lib = cc({ source: src, symbols: { len_of: { returns: "i32", args: ["ptr"] } } });
+  const { CString } = await import("bun:ffi");
+  const c = new CString("hola-vida");
+  const n = lib.symbols.len_of(c);
+  c.free?.();
+  if (n !== 9) throw new Error("strlen devolvio " + n);
+  return "strlen resuelto desde C compilado en runtime";
 });
 console.log(`runtime: ${isNode ? "node " + process.version : "bun " + Bun.version}`);
 console.log(R.join("\n"));

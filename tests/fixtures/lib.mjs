@@ -4,6 +4,7 @@
 // directory (BATTERY_CASE_DIR). A case returns normally to PASS, throws to
 // FAIL, or calls skip() to report "#SKIP <reason>" and exit 0.
 import { existsSync } from "node:fs";
+import path from "node:path";
 
 export const CASE_DIR = process.env.BATTERY_CASE_DIR || process.cwd();
 
@@ -69,6 +70,27 @@ export function diedFrom(proc, name) {
 
 export function requirePath(p, why) {
   if (!existsSync(p)) skip(`${why}: no existe ${p}`);
+}
+
+// Cert efimero autofirmado para handshakes TLS LOCALES del propio caso (cada
+// caso tiene su dir de scratch, asi que no se comparte entre casos). La
+// verificacion se ejercita FIJANDO esta CA como trusted, nunca desactivandola;
+// no sirve para trafico real.
+export function selfSignedCert(dir = CASE_DIR) {
+  const openssl = "/data/data/com.termux/files/usr/bin/openssl";
+  if (!existsSync(openssl)) skip("openssl no instalado (necesario para el caso TLS)");
+  const key = path.join(dir, "tls-key.pem");
+  const cert = path.join(dir, "tls-cert.pem");
+  const r = Bun.spawnSync({
+    cmd: [openssl, "req", "-x509", "-newkey", "rsa:2048", "-keyout", key, "-out", cert,
+      "-days", "1", "-nodes", "-subj", "/CN=localhost",
+      "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"],
+    cwd: dir, stdout: "pipe", stderr: "pipe",
+  });
+  if (!existsSync(cert) || !existsSync(key)) {
+    skip(`openssl no genero el par key/cert (rc=${r.exitCode})`);
+  }
+  return { key, cert };
 }
 
 export function withTimeout(ms, fn) {

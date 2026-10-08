@@ -154,6 +154,50 @@ const cases = {
     eq(r.exitCode, 0, "standalone con dep corre: " + r.stderr.toString().slice(-300));
     eq(r.stdout.toString().trim(), "dep 1s", "dep empaquetada en standalone");
   },
+
+  bun_test_runner_pass_fail_rc: () => {
+    writeFileSync(P("battery.test.ts"), 'import { expect, test } from "bun:test";\n' +
+      'test("suma", () => { expect(1 + 1).toBe(2); });\n' +
+      'test("rompe", () => { expect(2).toBe(3); });\n');
+    const p = self(["test", "battery.test.ts"]);
+    const out = p.stdout.toString() + p.stderr.toString();
+    const pass = /(\d+) pass/.exec(out);
+    const fail = /(\d+) fail/.exec(out);
+    assert(pass && fail, `sin resumen de bun test (rc=${p.exitCode}): ` + out.slice(0, 220));
+    eq(pass[1], "1", "tests que pasan");
+    eq(fail[1], "1", "tests que fallan");
+    assert(p.exitCode !== 0, "rc distinto de cero con un test fallando: " + p.exitCode);
+  },
+
+  install_frozen_lockfile_and_pm_ls: () => {
+    mkdirSync(P("pm-app"), { recursive: true });
+    const json = { name: "pm-app", version: "1.0.0", dependencies: { ms: "2.1.3" } };
+    writeFileSync(P("pm-app/package.json"), JSON.stringify(json, null, 2));
+    const i = self(["install", "--cwd", "pm-app"]);
+    networkSkip(i);
+    eq(i.exitCode, 0, "install rc: " + i.stderr.toString().slice(-260));
+    assert(existsSync(P("pm-app/bun.lock")) || existsSync(P("pm-app/bun.lockb")), "el install escribe lockfile");
+    const f = self(["install", "--frozen-lockfile", "--cwd", "pm-app"]);
+    eq(f.exitCode, 0, "--frozen-lockfile sobre el lockfile propio rc: " + f.stderr.toString().slice(-260));
+    const ls = self(["pm", "ls", "--cwd", "pm-app"]);
+    eq(ls.exitCode, 0, "bun pm ls rc");
+    const out = ls.stdout.toString() + ls.stderr.toString();
+    assert(/ms@2\.1\.3/.test(out), "pm ls lista la dep: " + out.replace(/\n/g, " ").slice(0, 160));
+    const dirty = JSON.stringify({ ...json, dependencies: { ms: "2.1.2" } }, null, 2);
+    writeFileSync(P("pm-app/package.json"), dirty);
+    const g = self(["install", "--frozen-lockfile", "--cwd", "pm-app"]);
+    assert(g.exitCode !== 0, "--frozen-lockfile tiene que rechazar un package.json divergente del lockfile");
+  },
+
+  run_script_with_preload_and_dotenv: () => {
+    writeFileSync(P("battery-preload.ts"), "globalThis.__bateria_pre = \"pre-ok\";\n");
+    writeFileSync(P(".env"), "BATERIA_DOTENV=desde-dotenv\n");
+    writeFileSync(P("app-preload.mjs"),
+      "console.log(String(globalThis.__bateria_pre) + \"/\" + (process.env.BATERIA_DOTENV || \"AUSENTE\"));\n");
+    const p = self(["--preload", "./battery-preload.ts", "app-preload.mjs"]);
+    eq(p.exitCode, 0, "run con --preload rc: " + p.stderr.toString().slice(-240));
+    eq(p.stdout.toString().trim(), "pre-ok/desde-dotenv", "preload ejecutado y .env autoload");
+  },
 };
 
 export default caseMain(cases);
