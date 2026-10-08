@@ -242,6 +242,63 @@ const cases = {
     eq(recipe.rc, 0, "la receta no mata el proceso");
     eq(recipe.out, "RET=11", "errno funcional con el shadow delante (EAGAIN=11)");
   },
+
+  // Receta para el conjunto COMPLETO de headers bionic que crashean (sonda
+  // t6-clang-e en $PREFIX/tmp): preprocesar con clang -E y entregarle a tcc el
+  // resultado plano, sin la cadena de #include. Tres filtros, cada uno medido
+  // contra el error real de tcc:
+  //   - lineas `__int128`: tcc no conoce el keyword y bionic lo usa en los
+  //     typedefs `__s128`/`__u128` de sys/types.h (`error: ';' expected`).
+  //   - lineas `__overloadable__`: bionic declara `ioctl` dos veces con tipos
+  //     distintos (`error: incompatible types for redefinition`).
+  //   - anotaciones `_Nullable`/`_Nonnull`/`_Null_unspecified`.
+  // Sin el crash (rc=139) desaparece: cc() compila y `errno` funciona.
+  cc_headers_bionic_via_clang_preprocesado: async () => {
+    requirePath(`${TERMUX_PREFIX}/include/errno.h`, "headers de Termux");
+    const clang = Bun.which("clang");
+    if (!clang) skip("clang no esta instalado: no hay preprocesador alternativo");
+    const src = cSource("hdr-all.c",
+      "#include <errno.h>\n#include <unistd.h>\n#include <stdlib.h>\n#include <string.h>\n" +
+      "#include <time.h>\n#include <fcntl.h>\n#include <sys/stat.h>\n" +
+      "int f(void) {\n" +
+      "  struct stat st; char *p = (char*)malloc(8); memcpy(p, \"ok\", 3);\n" +
+      "  errno = EAGAIN; time_t t = time(0);\n" +
+      "  int fd = open(\"/dev/null\", O_RDONLY); int r = fd >= 0 ? 1 : 0; if (fd >= 0) close(fd);\n" +
+      "  stat(\"/dev/null\", &st); free(p);\n" +
+      "  return (errno == EAGAIN && r && t) ? 7 : 0;\n}\n");
+
+    const pre = Bun.spawn({ cmd: [clang, "-E", "-std=gnu11", src, "-o", P("hdr-all.i")], cwd: CASE_DIR, stderr: "pipe" });
+    const rcPre = await withTimeout(90000, () => pre.exited);
+    eq(rcPre, 0, "clang -E sobre la cadena de headers: " + (await new Response(pre.stderr).text()).slice(0, 140));
+
+    const flat = readFileSync(P("hdr-all.i"), "utf8")
+      .replace(/^#[ \t].*$/gm, "")
+      .replace(/_Null_?[a-z_]*/g, "")
+      .replace(/__extension__ /g, "")
+      .replace(/^.*__int128.*$/gm, "")
+      .replace(/^.*__overloadable__.*$/gm, "");
+    const flatPath = P("hdr-all-flat.c");
+    writeFileSync(flatPath,
+      "#define ioctl __tcc_no_ioctl\n" +
+      "typedef struct { long lo, hi; } __s128;\n" +
+      "typedef struct { unsigned long lo, hi; } __u128;\n" + flat);
+
+    const runner = P("run-flat.mjs");
+    writeFileSync(runner,
+      'import { cc } from "bun:ffi";\n' +
+      "const lib = cc({ source: process.argv[2], symbols: { f: { returns: \"i32\", args: [] } },\n" +
+      "  flags: process.argv[3] });\n" +
+      'console.log("RET=" + lib.symbols.f());\n');
+    const p = Bun.spawn({
+      cmd: [process.execPath, runner, flatPath, `${TCC_ANDROID_DEF} -L${BIONIC_DIR} -lc`],
+      cwd: CASE_DIR, stdout: "pipe", stderr: "pipe",
+    });
+    const rc = await withTimeout(90000, () => p.exited);
+    const out = (await new Response(p.stdout).text()).trim();
+    const err = (await new Response(p.stderr).text()).trim();
+    eq(rc, 0, `el hijo plano sobrevive (rc=${rc}) :: ${out.slice(0, 60)} ${err.slice(0, 140)}`);
+    eq(out, "RET=7", "errno/unistd/time/stat/fcntl preprocesados compilan y corren");
+  },
 };
 
 export default caseMain(cases);

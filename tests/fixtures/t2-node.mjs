@@ -29,7 +29,7 @@ import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import util from "node:util";
 import { Worker } from "node:worker_threads";
-import { assert, caseMain, CASE_DIR, eq, selfSignedCert, skip, withTimeout } from "./lib.mjs";
+import { assert, caseMain, CASE_DIR, eq, eqJSON, selfSignedCert, skip, withTimeout } from "./lib.mjs";
 
 const P = (...p) => path.join(CASE_DIR, ...p);
 
@@ -216,13 +216,26 @@ const cases = {
   },
 
   node_dns_raw_resolve: async () => {
-    // c-ares no tiene /etc/resolv.conf en Termux y el proceso NUNCA resuelve ni
-    // rechaza, ni siquiera con server explicito. Miden esto igual bun 1.3.14 de
-    // $PREFIX/bin (upstream) => limitacion de upstream sobre bionic, no del port.
-    // Se espera que este caso falle por timeout: si empieza a pasar, la bateria
-    // lo reporta como UNEXPECTED.
-    await withTimeout(12000, () => dns.promises.resolve("example.com"));
-    assert(false, "dns.promises.resolve devolvio algo: la limitacion upstream desaparecio");
+    // Parche 0008: el canal c-ares siembra los nameservers de
+    // $PREFIX/etc/resolv.conf (Termux los publica y responden por UDP:53), así
+    // que la ruta cruda existe y resuelve. Antes de 0008 este caso moría en
+    // ETIMEOUT a los ~21 s porque el channel nacía con el fallback 127.0.0.1
+    // del dnsproxyd, inalcanzable desde el uid de Termux.
+    const TERMUX_PREFIX = process.env.PREFIX || "/data/data/com.termux/files/usr";
+    const conf = path.join(TERMUX_PREFIX, "etc/resolv.conf");
+    if (!existsSync(conf)) skip(`no hay resolv.conf en ${conf}: el default de upstream queda intacto`);
+    const ns = readFileSync(conf, "utf8").split("\n")
+      .filter((l) => l.startsWith("nameserver")).map((l) => l.split(/\s+/)[1]).filter(Boolean);
+    if (ns.length === 0) skip("el resolv.conf no declara nameserver: nada que sembrar");
+
+    eqJSON(Bun.dns.getServers(), ns, "los servers del canal son los del archivo");
+    const addrs = await withTimeout(15000, () => dns.promises.resolve("example.com", "A"));
+    assert(Array.isArray(addrs) && addrs.length > 0 && /^\d+\.\d+\.\d+\.\d+$/.test(addrs[0]),
+      "dns.promises.resolve A: " + JSON.stringify(addrs));
+    const mx = await withTimeout(15000, () => dns.promises.resolveMx("google.com"));
+    assert(mx.length > 0 && typeof mx[0].exchange === "string", "resolveMx: " + JSON.stringify(mx).slice(0, 80));
+    const txt = await withTimeout(15000, () => Bun.dns.resolve("_dmarc.github.com", { recordType: "TXT" }));
+    assert(JSON.stringify(txt).includes("DMARC"), "Bun.dns.resolve TXT: " + JSON.stringify(txt).slice(0, 80));
   },
 
   node_crypto_deep: () => {

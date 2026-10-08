@@ -290,36 +290,35 @@ const cases = {
     db.close();
   },
 
-  dns_getservers_devuelve_el_loopback_de_android: () => {
+  dns_getservers_siembra_el_resolv_conf_de_termux: () => {
+    // Antes del parche 0008 este caso afirmaba `["127.0.0.1"]` (el fallback de
+    // c-ares en android, porque el dnsproxyd de Android no contesta desde el
+    // uid de Termux). Ahora el canal arranca con los servers que Termux
+    // publica en `$PREFIX/etc/resolv.conf`.
     const servers = Bun.dns.getServers();
-    assert(Array.isArray(servers), "getServers es un array: " + JSON.stringify(servers));
-    assert(servers.length > 0, "hay al menos un resolver configurado");
+    assert(Array.isArray(servers) && servers.length > 0, "getServers es un array no vacío: " + JSON.stringify(servers));
     for (const s of servers) {
       assert(/^(\d+\.){3}\d+$|^[0-9a-fA-F:]+$/.test(s), "cada resolver es una IP: " + s);
     }
-    // Termux: el resolver que ve bun es el loopback del dnsproxyd de Android,
-    // unreachable desde el uid — la causa del KNOWN de node:dns.
-    eqJSON(servers, ["127.0.0.1"], "el único resolver visible es el loopback de dnsproxyd");
+    const TERMUX_PREFIX = process.env.PREFIX || "/data/data/com.termux/files/usr";
+    const conf = path.join(TERMUX_PREFIX, "etc/resolv.conf");
+    if (!existsSync(conf)) return; // sin archivo: el default de upstream es lo que hay que ver
+    const ns = readFileSync(conf, "utf8").split("\n")
+      .filter((l) => l.startsWith("nameserver")).map((l) => l.split(/\s+/)[1]).filter(Boolean);
+    if (ns.length === 0) return;
+    eqJSON(servers, ns, "el canal usa los nameservers del resolv.conf de Termux");
   },
 
-  dns_ruta_sistema_vive_y_la_cruda_no: async () => {
-    // Dos caminos al DNS y solo uno tiene a quién preguntar en Termux. Medido:
-    // lookup() (getaddrinfo, ruta del sistema) resuelve; los crudos, que van a
-    // 127.0.0.1:53, no reciben nunca respuesta (no es ECONNREFUSED: timeout).
+  dns_ruta_sistema_y_cruda_ambas_vivas: async () => {
+    // Los dos caminos al DNS tienen a quién preguntar: lookup() va por
+    // getaddrinfo (bionic → netd) y los crudos van por c-ares contra los
+    // servers sembrados por el parche 0008.
     const { default: dnsPromises } = await import("node:dns/promises");
     const got = await withTimeout(20000, () => dnsPromises.lookup("example.com"));
     assert(/^\d+\.\d+\.\d+\.\d+$/.test(got.address), "lookup() resuelve por getaddrinfo: " + JSON.stringify(got));
-    let crude = "no lanzó";
-    try {
-      // Sin carrera de timeout propia: el ETIMEOUT nativo tarda ~21 s (medido
-      // 20792ms) y envolverlo hacía que el caso afirmara el error del wrapper.
-      await Bun.dns.resolve("example.com", { verb: true });
-    } catch (e) {
-      crude = String(e.message ?? e);
-    }
-    assert(/ETIMEOUT|queryA|timed out|ENOTFOUND/i.test(crude), "el resolver crudo falla con timeout, no con datos: " + crude);
-    // Regla de lectura: si este caso cuelga *después* del fallo, el problema es
-    // un socket propio sin cerrar; el fallo limpio mata el proceso (rc=0 medido).
+    const crude = await withTimeout(20000, () => Bun.dns.resolve("example.com", { verb: true }));
+    assert(Array.isArray(crude) && crude.length > 0 && "address" in crude[0],
+      "Bun.dns.resolve(verb) resuelve por c-ares: " + JSON.stringify(crude).slice(0, 120));
   },
 
   standalone_flag_y_embedded_files_fuera_de_compile: () => {

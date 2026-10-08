@@ -1,0 +1,106 @@
+From 81624929ba2bac36f01b3d5113e65079985acadd Mon Sep 17 00:00:00 2001
+From: bun-android <ci@local>
+Date: Thu, 8 Oct 2026 14:55:24 -0600
+Subject: [PATCH] feat(android): sembrar los nameservers de Termux en el canal
+ c-ares
+
+Upstream fija 127.0.0.1 como unico server en android porque c-ares no puede
+autodescubrirlos (no hay /etc/resolv.conf ni JNI) y documenta dns.setServers()
+como el escape hatch. Termux si publica sus servers, en $PREFIX/etc/resolv.conf,
+y responden por UDP:53 (medido en dispositivo: 26-42 ms). Sembrarlos en
+Channel::init convierte ese workaround en el default y deja de ser un hang
+ETIMEOUT toda la ruta cruda de dns (node:dns resolve*, Bun.dns.resolve).
+---
+ src/cares_sys/c_ares.rs | 69 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 69 insertions(+)
+
+diff --git a/src/cares_sys/c_ares.rs b/src/cares_sys/c_ares.rs
+index 2be42bc..ac3cd26 100644
+--- a/src/cares_sys/c_ares.rs
++++ b/src/cares_sys/c_ares.rs
+@@ -718,6 +718,52 @@ fn copy_nul_terminated(buf: &mut [u8], src: &[u8]) -> *const c_char {
+     buf.as_ptr().cast::<c_char>()
+ }
+ 
++/// Rutas reales del dispositivo: Termux no tiene `/etc/resolv.conf` pero sí
++/// `$PREFIX/etc/resolv.conf`, y sus nameservers responden por UDP:53.
++#[cfg(target_os = "android")]
++const TERMUX_RESOLV_CONF: &str = "/data/data/com.termux/files/usr/etc/resolv.conf";
++
++/// Parsear los `nameserver` del resolv.conf de Termux en el formato de lista
++/// que espera `ares_set_servers_ports`. `None` si no hay archivo o no aporta
++/// ningún server utilizable (comportamiento upstream intacto).
++#[cfg(target_os = "android")]
++fn termux_nameservers() -> Option<Vec<struct_ares_addr_port_node>> {
++    let path = std::env::var("RESOLV_CONF").unwrap_or_else(|_| TERMUX_RESOLV_CONF.to_string());
++    let text = std::fs::read_to_string(path).ok()?;
++    let mut nodes: Vec<struct_ares_addr_port_node> = Vec::with_capacity(3);
++    for line in text.lines() {
++        if nodes.len() >= 3 {
++            break;
++        }
++        let mut fields = line.split_ascii_whitespace();
++        if fields.next() != Some("nameserver") {
++            continue;
++        }
++        let Some(found) = fields.next() else { continue };
++        // Un IPv6 con zona (`%iface`) la rechaza `ares_inet_pton`.
++        let addr = found.split('%').next().unwrap_or(found);
++        let family: c_int = if addr.contains(':') { AF::INET6 } else { AF::INET };
++        let Ok(c_addr) = std::ffi::CString::new(addr) else { continue };
++        let mut node: struct_ares_addr_port_node = bun_core::ffi::zeroed();
++        node.family = family;
++        node.udp_port = 53;
++        node.tcp_port = 53;
++        node.next = ptr::null_mut();
++        // SAFETY: FFI; `c_addr` esta NUL-terminado y `addr_mut_ptr()` apunta al
++        // union in_addr/in6_addr (16 bytes), suficiente para ambas familias.
++        if unsafe { ares_inet_pton(family, c_addr.as_ptr().cast::<c_char>(), node.addr_mut_ptr()) }
++            != 1
++        {
++            continue;
++        }
++        nodes.push(node);
++    }
++    if nodes.is_empty() {
++        return None;
++    }
++    Some(nodes)
++}
++
+ impl Channel {
+     pub fn init<C: ChannelContainer>(this: &C, options: ChannelOptions) -> Option<Error> {
+         let mut channel: *mut Channel = ptr::null_mut();
+@@ -773,6 +819,29 @@ impl Channel {
+         }
+ 
+         this.set_channel(channel);
++
++        // Android/Termux: c-ares no puede autodescubrir nameservers (no existe
++        // `/etc/resolv.conf` y no hay JNI), así que el channel nace con el
++        // fallback 127.0.0.1 y toda consulta cruda (`node:dns` `resolve*()`,
++        // `Bun.dns.resolve`) muere en ETIMEOUT contra el dnsproxyd de Android,
++        // que no responde desde el uid de Termux. Termux publica sus servers en
++        // `$PREFIX/etc/resolv.conf` y responden por UDP:53. Sembrarlos acá
++        // convierte el workaround documentado (`dns.setServers()`) en el
++        // comportamiento por defecto. Si el archivo no existe o no parsea, se
++        // deja intacto el default de upstream.
++        #[cfg(target_os = "android")]
++        if let Some(mut nodes) = termux_nameservers() {
++            // Enlazar despues de poblar el Vec (sin reallocs pas este punto).
++            for i in 1..nodes.len() {
++                let next: *mut _ = &raw mut nodes[i];
++                nodes[i - 1].next = next;
++            }
++            // SAFETY: FFI; `channel` es el handle recien inicializado arriba y
++            // `nodes` es una lista simplemente enlazada valida que vive durante
++            // la llamada (c-ares la copia internamente).
++            unsafe { ares_set_servers_ports(channel, nodes.as_mut_ptr()) };
++        }
++
+         None
+     }
+ 
+-- 
+2.56.0
+
