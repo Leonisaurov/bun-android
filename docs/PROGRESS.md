@@ -444,6 +444,238 @@ FAIL/TIMEOUT/SKIP/UNEXPECTED. Sigue fuera de lo afirmado: suite upstream,
 bundler/plugin API, NAPI nativo, rendimiento y el puente M4. `release-android.yml`
 **no** se dispatcheó (requiere autorización explícita).
 
+## A3 · superficie de producto (T10) y clasificación de los stubs — CERRADO 2026-10-08
+
+A2 cerró con 5 rojos atribuidos; la meta del usuario seguía abierta ("extiende
+los test, tiene que todo quedar en verde"). A3 mide la superficie que ningún
+tier tocaba —las APIs de producto de `Bun.*` y los restos del runner— y, antes
+de afirmar nada, **sondea**: nueve scripts (`$PREFIX/tmp/a3-probe*.mjs`)
+ejecutados en el ELF del dispositivo produjeron cada forma y cada valor que
+hoy está assertado. Ningún caso de T10 salió de la documentación.
+
+### Qué se sumó (126 → 153 casos, tier T10 de 27)
+
+**T10 · superficie de producto y del runner** (tier nuevo):
+
+- Serializadores: `Bun.TOML`/`YAML`/`JSON5` con `parse`+`stringify`, y
+  `Bun.JSONL`, que **no tiene `stringify`** — su segunda clave es `parseChunk`
+  y devuelve `{values, read, done, error}`, no un array.
+- `Bun.XML.stringify`/`parse` (en 1.3.14 el namespace no existe), `Bun.zstd*`
+  sync y async (5.600 B repetitivos → 32 B; nivel 1 y 19 idénticos),
+  `Bun.semver.order/satisfies`, `Bun.deepEquals`/`deepMatch` — y la dirección
+  real de `deepMatch`: el **primer** argumento es el patrón, y los arrays no
+  son subconjuntos (`{arr:[1]}` no matchea `{arr:[1,2]}`).
+- ANSI sobre códigos reales (`stringWidth("\x1b[31mrojo\x1b[0m")=4`,
+  `sliceAnsi` re-cierra el color con `\x1b[39m`), `Bun.peek`, `Bun.cron`,
+  `Bun.mmap(path)` → `Uint8Array` sobre el archivo (las formas `mmap(n, path)`
+  y `mmap(path, offset, len)` **throw**: "Expected a path" / "Expected options
+  to be an object").
+- Sockets **unix** en Bionic: `Bun.serve({unix})` (`s.url` = `unix:///…`,
+  `port` undefined) con `fetch(..., {unix})`, y `Bun.listen({unix, socket})`
+  respondiendo a un cliente `node:net` (`ECO:hola-unix`) — incluido HTTP/1.1
+  crudo por el mismo socket. `bun --watch` recarga con los fs events de
+  Termux (RUN-1 → RUN-2).
+- `node:vm` completo (13 exportaciones, `runInContext`/`runInNewContext` con
+  su cross-realm), `Bun.Glob` (`scan` async, `scanSync` **generador**),
+  import attributes `file`/`text` (el primero devuelve **la ruta absoluta**, no
+  el contenido), `await using` + `Symbol.asyncDispose`.
+- Runner y API: `bun test` con `mock`/`spyOn`/`--coverage`, `db.loadExtension`
+  en hijo (throw sin matar), `Bun.dns.getServers()`, `Bun.isStandaloneExecutable`
+  y `Bun.embeddedFiles` fuera de un `--compile`, `Bun.sha` vs `CryptoHasher`
+  con valores fijos.
+- WebCrypto (`ECDSA P-256` sign/verify, `HKDF-SHA256`) e Intl (`Collator` `es`
+  sensibilidad `base` sobre "ñoño"/"nono", `PluralRules` `es-AR`).
+
+### Falsos rojos del harness (otra clase, misma regla: medir antes de assertar)
+
+- `eq()` compara **identidad**. Tres casos nacieron rojos imprimiendo
+  `got [-1,1,0] want [-1,1,0]`. Se agregó `eqJSON()` (comparación por JSON) y
+  una pista en el mensaje de `eq` para que la próxima vez no se lea como rojo
+  del binario.
+- Cross-realm: `runInNewContext` devuelve arrays del realm del script; `===`
+  con un array literal del fixture no puede funcionar. Mismo error con
+  `scanSync`, que es generador y había que materializarlo.
+- `import()` con un specifier relativo resuelve contra el **módulo del
+  fixture** (`tests/fixtures/`), no contra el scratch del caso; la receta es
+  `pathToFileURL(abs).href`.
+- El registro de módulos cachea **por specifier**: importar el mismo URL con
+  otro attribute (o con `#fragmento`) devuelve el primer módulo resuelto.
+  Tapado primero con dos archivos distintos y después pinned con un caso
+  propio (`import_mismo_specifier_con_otro_attribute_devuelve_la_cacheada`).
+- `bun:test` **no** exporta `spy` (exporta `spyOn`); un probe que lo importaba
+  daba `rc=1` por SyntaxError y se leía como gap de cobertura.
+- `bun test --coverage` con todo verde sale `rc=0` y **no imprime tabla de
+  porcentajes** — idéntico en el oráculo 1.3.14.
+
+### Línea base y matriz final (mismo ELF, sin rebuild)
+
+`~/.bun-android/bin/bun` sha256 `31392bdeb78b99591da54a4d468037b5661e8e27bd109f60982e8b368de37e70`,
+`bun --revision` ⇒ `1.4.2-canary.1+39338cc1c` (run `37727225410`, parche 0007 —
+el mismo binario de A1 y A2; la batería creció, el port no se tocó). Logfile
+`$PREFIX/tmp/battery-logs/a4-full.log` / `a4-full.json`, 13.817 MB libres.
+
+| Tier | casos | PASS | FAIL | KNOWN | vs A2 |
+|---|---|---|---|---|---|
+| T1 CLI | 18 | 18 | — | — | igual |
+| T2 node compat | 27 | 26 | — | 1 | igual |
+| T3 http/TLS | 19 | 19 | — | — | igual |
+| T4 storage | 14 | 14 | — | — | igual |
+| T5 install/build | 13 | 12 | — | 1 | igual |
+| T6 FFI/TinyCC | 9 | 8 | — | 1 | igual |
+| T7 `--compile` | 4 | 4 | — | — | igual |
+| T8 edges Termux | 17 | 17 | — | — | igual |
+| T9 APIs producto | 5 | 3 | — | 2 | igual |
+| T10 producto + runner | 27 | 23 | — | 4 | tier nuevo |
+| **total** | **153** | **144** | **0** | **9** | **0 FAIL, 0 TIMEOUT, 0 SKIP, 0 UNEXPECTED** |
+
+Cierre: `PASS=144 FAIL=0 TIMEOUT=0 SKIP=0 KNOWN=9 UNEXPECTED=0`,
+`BATTERY_DONE rc=0`. Los cuatro verificadores dirigidos siguen verdes y ningún
+tier anterior perdió un verde (regresión completa T1→T10 sobre el mismo ELF).
+El oráculo `$PREFIX/bin/bun` (1.3.14) intacto.
+
+### Los 4 stubs nuevos: medidos en el dispositivo **y** en el oficial
+
+Cada uno reproduce byte a byte en el `bun-linux-x64` 1.4.2 oficial (sonda
+`probe-upstream-parity`, run `37787168311`, revisión `1.4.2+744846f84`) y tres
+de ellos también en el oráculo Android 1.3.14:
+
+| Caso | dispositivo (nuestro ELF) | upstream linux-x64 | Veredicto |
+|---|---|---|---|
+| `T10/archive_zip_roundtrip_real` | `write` crea 10.240 B con magic `"fi"`, `.files` lista 0 entradas | **ROJO idéntico** (`magic=fi size=10240`) | stub de upstream, sin parche |
+| `T10/image_resize_y_encode` | `width/height` = `-1×-1`, `encode` no devuelve nada; `Image.backend="bun"` | **ROJO idéntico** (`dims=-1x-1`) | stub de upstream, sin parche |
+| `T10/csrf_verify_con_el_mismo_secret` | `generate` da 86 chars, `verify` con el mismo secret → `false` | **ROJO idéntico** | stub de upstream, sin parche |
+| `T10/index_of_line_con_string_con_newline` | string → `-1`, `Buffer` → `4` | **ROJO idéntico** (`string=-1`) | gap de upstream con string, sin parche |
+
+Y con la misma sonda quedaron atribuidas dos afirmaciones más que antes eran
+"dito del teléfono": `coverage_tabla_en_bun_test` sale **ROJO en linux-x64**
+(tampoco imprime tabla ahí ⇒ no es limitación del build Android, como se había
+hipotetizado) y `sqlite_load_extension` falla con el mismo
+`undefined symbol: sqlite3_sqlite3_init` apuntando a `libsqlite3.so` del host,
+más `import_attribute_cache_por_specifier`, que es comportamiento upstream.
+
+### Clasificación final de los 9 KNOWN
+
+| Caso | causa | evidencia |
+|---|---|---|
+| `T2/node_dns_raw_resolve` | entorno Termux (sin `/etc/resolv.conf` ni `net.dns*`) | upstream OK; acá `Bun.dns.getServers()` = `["127.0.0.1"]` — el resolver crudo pregunta al dnsproxyd de Android en loopback y **nunca recibe respuesta** (`Bun.dns.resolve({verb:true})` lanza `queryA ETIMEOUT` a los ~21 s), mientras `lookup()` por getaddrinfo sí resuelve |
+| `T5/install_removes_pruned_dep` | comportamiento upstream | sonda linux-x64, runs `37776390386`/`37780014509` |
+| `T6/cc_headers_bionic_con_crash` | bug latente de la libtcc vendored, sensible a layout de memoria | disparador medido: `#pragma once` + segundo include con el **mismo basename**; el repro sintetico sega **20/20** en este ELF, **13/20** en el `bun-linux-aarch64` OFICIAL y **12/20** en el `bun-linux-x64` OFICIAL (runs `37792716755`/`37793508977`/`37793514722`/`37794547875`) ⇒ upstream, no del port. Receta verde y medida: shadow-dir sin el pragma (`T6/cc_pragma_once_colision_de_basename_con_recipe`) |
+| `T9/eventsource_global_available` | gap 1.4.x | indefinido en upstream |
+| `T9/worker_bare_onmessage_global` | gap 1.4.x | hang idéntico en upstream; Node lanza `ReferenceError` |
+| `T10/archive_zip_roundtrip_real` | stub de upstream | tabla anterior |
+| `T10/image_resize_y_encode` | stub de upstream | tabla anterior |
+| `T10/csrf_verify_con_el_mismo_secret` | stub de upstream | tabla anterior |
+| `T10/index_of_line_con_string_con_newline` | gap de upstream (ruta string) | tabla anterior |
+
+Nueve de nueve con causa medida. Ocho son de upstream/entorno y **ninguno**
+toca código de `patches/android/`; el restante (`T6/…`) quedó atribuido en A4
+con tasas medidas contra los oficiales x64 y aarch64 y con receta verde.
+
+### Decisión de port: ni parche 0008 ni 0009
+
+Con 153 casos y 0 FAIL, no hay ninguna señal de regresión nuestra, y la regla
+del plan sigue vigente: lo que reproduce igual en upstream o en el oráculo se
+documenta, no se parchea. Parchear un stub de `Bun.Archive`/`Bun.Image`/
+`Bun.CSRF` sería mantener fork de código de producto que el port no introduce.
+
+**Estado del port tras A3**: 7 parches versionados, 153 casos en 10 tiers, 144
+verdes, 9 rojos **todos con causa atribuida por sonda** (5 stubs/gaps de
+upstream 1.4.x, 2 comportamiento upstream, 1 entorno Termux, 1 tinycc
+vendored), 0 FAIL/TIMEOUT/SKIP/UNEXPECTED, regresión completa sellada sobre un
+ELF que no cambió desde A1. Sigue fuera de lo afirmado: suite upstream,
+bundler/plugin API, NAPI nativo, rendimiento y el puente M4.
+`release-android.yml` **no** se dispatcheó (requiere autorización explícita).
+(Esta matriz queda **superada por A4**: 155 casos / 146 verdes.)
+
+## A4 · causa raíz del crash de libtcc, receta verde y atribución por tasa — CERRADO 2026-10-08
+
+A3 cerró con el `T6/cc_headers_bionic_con_crash` como "dependencia vendored,
+abierto como trabajo de tinycc". La meta pedía verde o causa medida; A4 hace
+las dos cosas: acota el disparador mínimo, deja una **receta verificada como
+caso verde** de la batería, y atribuye contra los binarios OFiciales con
+tasas.
+
+### Qué se midió (serie de sondas `a5*` en `$PREFIX/tmp`, en el ELF del dispositivo)
+
+- **Disparador**: libtcc sega (rc=139) cuando un archivo cuyo **basename** es
+  `X` lleva `#pragma once` **y** trae por debajo otro archivo con el mismo
+  basename `X`. La ruta real de bionic lo pica siempre: `errno.h` (pragma) →
+  `linux/errno.h` → `asm/errno.h` → `asm-generic/errno.h`. Sin el pragma la
+  misma cadena compila; con pragma pero basename distincto también.
+- **Descartado por medición**: la hipótesis `_Nonnull`, las flags (crashea
+  igual con `-I` sola, con `-L… -lc`, con `-nostdlib`), y un `CONFIG_TCCDIR`
+  inexistente como parte del ciclo.
+- **Gaps hermanos del mismo preprocessor**: tcc sirve `stddef.h`/`stdarg.h`
+  como headers embebidos pero **no** `float.h` ni `iso646.h` (bionic
+  `limits.h:58` incluye `<float.h>`), y `stdatomic.h` muere en
+  `uchar.h:47: error: ';' expected (got 'char16_t')`. El árbol de includes de
+  Termux tiene **1.968 basenames duplicados**: hay más minas além de errno.
+
+### La receta (caso verde de la batería)
+
+`T6/cc_pragma_once_colision_de_basename_con_recipe` (PASS): shadow-dir listado
+**delante** en `-I` con una copia del header real sin `#pragma once` — y
+`errno` queda **funcional** (`errno = EAGAIN; return errno` → `RET=11`, 2/2).
+El caso también asserta las tres formas de control: colisión con pragma mata
+el hijo, sin pragma compila, y pragma con basename distincto compila.
+
+### Atribución por tasa contra los oficiales
+
+La sonda `probe-upstream-parity` se extendió con tres casos de `cc()` que se
+corren en **hijos** (un SIGSEGV no puede cortar el log) y un job nuevo
+`probe-aarch64` (`runs-on: ubuntu-24.04-arm`, `bun-linux-aarch64` oficial).
+Mismo caso, mismos binarios entre corridas (sha `a83d2637…` x64, `616f267a…`
+aarch64):
+
+| Binario | caso único (4 corridas) | tasa 20/20 hijos |
+|---|---|---|
+| `bun-linux-x64` 1.4.2 oficial | OK, ROJO, OK, OK → **1/4** | **12/20** |
+| `bun-linux-aarch64` 1.4.2 oficial | ROJO 3/3 | **13/20** |
+| Nuestro ELF android (dispositivo) | crash siempre | **20/20** |
+
+Runs: `37791139445`, `37792716755`, `37793508977`, `37793514722`,
+`37794547875`. El `bun-linux-aarch64-android` oficial **no es comparable**:
+probado en el teléfono, su `cc()` lanza "TinyCC is disabled" (upstream apaga
+tinycc en android; este port, con 0002/0003, es el primero que la corre).
+Lectura: bug **latente** de la libtcc vendored, sensible al layout de memoria
+— en los oficiales crashea con probabilidad ~⅔ y en nuestro ELF la probabilidad
+llega a 1. Los `bun.report` codifican la misma ubicación para x64 y aarch64
+(`la1744846f…`/`La1744846f…`); no hay nada de `patches/android/` en el camino.
+`float.h`: **ROJO también arriba** en ambas arquitecturas ⇒ no perdimos los
+builtin en nuestra cadena, tinycc no lo trae.
+
+### Batería final (el mismo ELF, sin rebuild desde A1)
+
+Dos casos nuevos sobre el sello de A3: `T10/dns_ruta_sistema_vive_y_la_cruda_no`
+(sonda: el crudo lanza `queryA ETIMEOUT` a ~21 s, `lookup()` vive) y la receta
+T6. Sello `a5-full` (154, PASS=145) y sello final **`a6-full.log`/`a6-full.json`**:
+
+| Tier | casos | PASS | FAIL | KNOWN | vs A3 |
+|---|---|---|---|---|---|
+| T1 CLI | 18 | 18 | — | — | igual |
+| T2 node compat | 27 | 26 | — | 1 | igual |
+| T3 http/TLS | 19 | 19 | — | — | igual |
+| T4 storage | 14 | 14 | — | — | igual |
+| T5 install/build | 13 | 12 | — | 1 | igual |
+| T6 FFI/TinyCC | 10 | 9 | — | 1 | **+1 receta verde** |
+| T7 `--compile` | 4 | 4 | — | — | igual |
+| T8 edges Termux | 17 | 17 | — | — | igual |
+| T9 APIs producto | 5 | 3 | — | 2 | igual |
+| T10 producto + runner | 28 | 24 | — | 4 | **+1 dns verde** |
+| **total** | **155** | **146** | **0** | **9** | **0 FAIL, 0 TIMEOUT, 0 SKIP, 0 UNEXPECTED** |
+
+`PASS=146 FAIL=0 TIMEOUT=0 SKIP=0 KNOWN=9 UNEXPECTED=0`, `BATTERY_DONE rc=0`,
+sha256 `31392bdeb78b99591da54a4d468037b5661e8e27bd109f60982e8b368de37e70`,
+`--revision` `1.4.2-canary.1+39338cc1c`.
+
+### Decisión y estado tras A4
+
+Ningún rojo nuevo, ningún verde perdido, y el último KNOWN sin causa deja de
+estar "abierto": tiene disparador mínimo, tasa contra oficiales y receta
+funcional. **Sin parche 0008, 0009 ni 0010.** El port sigue afirmado por
+evidencia en 155 casos; `release-android.yml` no se dispatcheó.
+
+
 ## Bitácora
 
 - 2026-10-07: B0 en ejecución; pines verificados (ver manifest); sha256 del
@@ -462,3 +694,36 @@ bundler/plugin API, NAPI nativo, rendimiento y el puente M4. `release-android.ym
   proceso), así que la limitación de FFI pasó a verde sin parche. Descartado
   el patch 0008 de default: sin `-nostdlib` los dispositivos API 28 sin
   namespace APEX se quedan sin `cc()`.
+- 2026-10-08 (A3): tier **T10** (27 casos) añadido tras nueve sondas en el
+  dispositivo; 153 casos en 10 tiers y `PASS=144 FAIL=0 KNOWN=9 UNEXPECTED=0`
+  con `BATTERY_DONE rc=0` sobre el mismo ELF (`a4-full.log`). En el camino se
+  corrigió un defecto del harness (`eq` por identidad) que producía rojos
+  ilegibles: ahora existe `eqJSON`.
+- 2026-10-08 (A3): sonda de paridad run `37787168311` clasificó los 4 stubs
+  nuevos (`Archive`, `Image`, `CSRF`, `indexOfLine` con string) como
+  **idénticos en el `bun-linux-x64` oficial 1.4.2**, y además refutó la
+  hipótesis de que `--coverage` no imprima tabla por ser un build Android: en
+  linux-x64 tampoco. Con eso los 9 `KNOWN` quedan con causa medida y no hubo
+  parche 0009.
+- 2026-10-08 (A4): causa raíz del crash de libtcc acotada por las sondas
+  `a5*`: `#pragma once` + colisión de basename (disparador mínimo, 20/20 en
+  el dispositivo). Receta medida y fijada como caso verde
+  (`T6/cc_pragma_once_colision_de_basename_con_recipe`, `errno` → `RET=11`).
+  Gaps hermanos documentados: sin `float.h`/`iso646.h` builtin, `uchar.h` con
+  `char16_t`, 1.968 basenames duplicados en `$PREFIX/include`. Sellos `a5-full`
+  (154, PASS=145) y `a6-full` (155, PASS=146, KNOWN=9, `BATTERY_DONE rc=0`).
+- 2026-10-08 (A4): la sonda upstream se extendió con tres casos `cc()` en
+  hijos y el job `probe-aarch64` (oficial `bun-linux-aarch64`, runner arm).
+  Tasas del mismo repro: 12/20 (x64 oficial), 13/20 (aarch64 oficial), 20/20
+  (nuestro ELF) — bug latente de la libtcc vendored, **no** del port; `float.h`
+  tampoco existe arriba. Runs `37791139445`/`37792716755`/`37793508977`/
+  `37793514722`/`37794547875`. Sin parche 0010. El `bun-linux-aarch64-android`
+  oficial bajado al teléfono confirma que upstream trae TinyCC apagada en
+  android (`cc()` throw "not available in this build").
+- 2026-10-08 (incidente operativo, sin daño): correr `verify-device.sh` con
+  una copia vieja (`$PREFIX/tmp/bunandroid/bun`, 1.2.13 de la era anterior)
+  **downgradeó** `~/.bun-android/bin/bun` porque el script instalaba antes de
+  validar la versión. Restaurado en el momento desde `~/.local/bin/bun`, sha
+  intacto `31392bde…` (byte a byte el del sello `a6-full`). El script quedó
+  endurecido: `-ef` (source==dest aborta) y `--version` de SRC chequeda
+  **antes** de instalar; ambos guardas probados en vivo.

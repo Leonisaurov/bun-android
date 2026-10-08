@@ -1,6 +1,6 @@
 # Roadmap
 
-Estado a 2026-10-07. Lo cerrado tiene evidencia fechada en
+Estado a 2026-10-08 (tras A4). Lo cerrado tiene evidencia fechada en
 [`PROGRESS.md`](PROGRESS.md); acá solo queda lo pendiente, con su contexto
 de decisión.
 
@@ -15,6 +15,22 @@ de decisión.
   con el job `probe-upstream-parity` contra el `bun-linux-x64` oficial 1.4.2, y
   la limitación de FFI (`cc()` sin libc) se cerró **midiendo** la receta de
   flags/`BUN_TCC_OPTIONS`, sin parche nuevo.
+- **A3 superficie de producto** (tier T10, 153 casos en 10 tiers: 144 PASS /
+  0 FAIL / 9 KNOWN con el mismo ELF, sin rebuild). Cada assert de T10 viene de
+  una sonda en el dispositivo; los 4 stubs nuevos (`Bun.Archive`, `Bun.Image`,
+  `Bun.CSRF`, `Bun.indexOfLine` con string) fallan **igual** en el linux-x64
+  oficial (run `37787168311`) ⇒ documentados, no parcheados. En el proceso se
+  corrigió un defecto del harness (`eq` comparaba identidad) que fabricaba
+  rojos ilegibles.
+- **A4 causa raíz del crash de libtcc y atribución por tasa** (155 casos: 146
+  PASS / 0 FAIL / 9 KNOWN, sellos `a5-full`/`a6-full`, mismo ELF sin rebuild).
+  El SIGSEGV con headers bionic quedó acotado a su disparador mínimo
+  (`#pragma once` + colisión de basename), tiene **receta verde** en la batería
+  (shadow-dir sin pragma, `errno` → `RET=11`) y está atribuido contra los dos
+  oficiales con tasas del mismo repro: 12/20 en linux-x64, 13/20 en linux-aarch64
+  (job nuevo `probe-aarch64`), 20/20 en nuestro ELF — bug latente de la libtcc
+  vendored, no del port. `float.h`/`iso646.h` tampoco los trae upstream.
+  Runs `37791139445`–`37794547875`.
 - Infra de repo: workflow de build, workflow de publicación (probado en
   negativo), set de docs.
 
@@ -60,15 +76,23 @@ punta a punta. No se migra nada del workspace sin esa evidencia.
   único FAIL de la batería).
 - [ ] RLIMIT/heap: reconsiderar solo con demanda medida. La batería A1 estresó
       50 spawns, 256 MB de heap y cientos de fds sin SIGSYS ni crashes.
-- [ ] Los 5 `KNOWN` de A2 siguen abiertos, cada uno con su causa atribuida por
-      la sonda upstream (runs `37776390386`/`37780014509`):
-      `dns.promises.resolve()` cuelga sin `/etc/resolv.conf` (verde en linux-x64 ⇒
-      entorno), `bun install` deja la dep podada (rojo también en upstream),
-      `EventSource` y los handlers globales de worker (gap de la línea 1.4.x),
-      y el SIGSEGV de libtcc con headers bionic compuestos (`errno.h`,
-      `unistd.h`, `stdlib.h`, `time.h`, `fcntl.h`, `sys/stat.h`) — eso último
-      es trabajo de la dependencia tinycc vendored, con un ciclo de CI por
-      hipótesis, y es el único candidato real a "volver verde" algo más.
+- [ ] Los 9 `KNOWN` de A2+A3 siguen abiertos, cada uno con su causa atribuida
+      por sonda upstream (runs `37776390386`/`37780014509`/`37787168311`):
+      `dns.promises.resolve()` cuelga sin `/etc/resolv.conf` (verde en linux-x64
+      ⇒ entorno; la prueba directa es `Bun.dns.getServers()` = `["127.0.0.1"]`,
+      el dnsproxyd de Android, inalcanzable desde el uid de Termux), `bun
+      install` deja la dep podada (rojo también en upstream), `EventSource` y
+      los handlers globales de worker (gap de la línea 1.4.x), los 4 stubs de
+      producto medidos en A3 (`Archive` escribe magic `"fi"` en vez de `"PK"`,
+      `Image` da `-1×-1`, `CSRF.verify` devuelve `false` con su propio secret,
+      `indexOfLine` con string da `-1`) y el SIGSEGV de libtcc con headers
+      bionic compuestos (`errno.h`, `unistd.h`, `stdlib.h`, `time.h`,
+      `fcntl.h`, `sys/stat.h`). El de libtcc quedó **atribuido y recetado en
+      A4** (disparador mínimo: `#pragma once` + colisión de basename; tasas
+      contra oficiales 12/20 x64 y 13/20 aarch64 ⇒ bug latente de la tinycc
+      vendored; receta verde en `T6/cc_pragma_once_colision_de_basename_con_recipe`)
+      — ningún candidato queda ya como "verducible" con código de este port:
+      los nueve son upstream/entorno, documentados con evidencia.
 
 ### 4. Si la superficie crece
 

@@ -28,7 +28,7 @@ manifest (pins)
                     └─> readelf/sha del ELF → artifact bun-aarch64-android
                           ├─> dispositivo: verify-device.sh → ~/.bun-android/bin
                           │     ├─> verificadores dirigidos (sigsys/tmpdir/tinycc + M2)
-                          │     └─> batería amplia T1–T9 (battery-device.sh)
+                          │     └─> batería amplia T1–T10 (battery-device.sh)
                           │           └─> evidencia fechada → PROGRESS.md
                           └─> release-android.yml (solo dispatch, autorizable)
                                 └─> GitHub Release (tarball + ELF + sha256.txt)

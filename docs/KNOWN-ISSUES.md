@@ -33,13 +33,34 @@ como limitación consciente.
   efecto: `-D_FORTIFY_SOURCE=0`, `-D_Nullable= -D_Nonnull=`. Los headers que
   sí parsean hoy: `<string.h>`, `<stdio.h>`, `<dlfcn.h>`, `<stddef.h>`
   (builtin de tcc), `<stdint.h>`, `<malloc.h>`, `<alloca.h>`, `<xlocale.h>`.
-  Causa de fondo: oven-sh/tinycc no tiene soporte bionic — es exactamente el
-  motivo por el que upstream apagaba TinyCC en Android antes del patch 0002,
-  y re-habilitarlo fue decisión del port. **Sin parche posible en este loop**
-  (sería trabajo dentro del C preprocessor de la dependencia vendored, con un
-  ciclo de CI por hipótesis). Casos medidos: `T6/cc_headers_bionic_con_crash`
-  (expect=KNOWN) y `T6/cc_headers_bionic_que_tcc_parsea` (verde, fija la
-  cobertura real).
+  - **Causa raíz acotada en A4** (sondas `a5*`): libtcc sega cuando un
+    archivo cuyo **basename** es `X` lleva `#pragma once` **y** trae debajo
+    otro archivo con el mismo basename `X`. Bionic la pica en la ruta real
+    (`errno.h` con pragma → `linux/errno.h` → `asm/errno.h` →
+    `asm-generic/errno.h`); glibc se salva porque usa include guards. El
+    disparador mínimo es sintético (dos archivos `errno.h` nuestros) y aun así
+    **20/20** en este ELF.
+  - **Atribución por tasa contra oficiales** (sonda `probe-upstream-parity`,
+    casos en hijo + job `probe-aarch64`, runs `37792716755`/`37793508977`/
+    `37793514722`/`37794547875`): el mismo repro sintético sega **12/20** en
+    el `bun-linux-x64` oficial 1.4.2 y **13/20** en el `bun-linux-aarch64`
+    oficial ⇒ bug **latente de la libtcc vendored**, sensible al layout de
+    memoria; nuestro build android lo lleva a probabilidad ≈1 pero no lo
+    introduce (nada de `patches/android/` en el camino; el
+    `bun-linux-aarch64-android` oficial ni siquiera trae TinyCC: `cc()` throw
+    "not available in this build"). **Sin parche** por la regla del plan.
+  - **Receta medida y verde**: shadow-dir en `-I` **delante** con una copia
+    del header real sin `#pragma once` — deja `errno` funcional (`EAGAIN` →
+    `RET=11`). Caso: `T6/cc_pragma_once_colision_de_basename_con_recipe`
+    (PASS); los controles (sin pragma / basename distincto) también viven ahí.
+  - **Gaps hermanos del mismo preprocessor**: tcc sirve `stddef.h`/`stdarg.h`
+    builtin pero **no** `float.h` ni `iso646.h` (y bionic `limits.h:58`
+    incluye `<float.h>`; `float.h` tampoco existe en los oficiales ⇒ no lo
+    perdimos nosotros), y `stdatomic.h` muere en `uchar.h:47: error: ';'
+    expected (got 'char16_t')`. El árbol `$PREFIX/include` tiene **1.968**
+    basenames duplicados: la mina no es solo `errno.h`.
+  Casos medidos: `T6/cc_headers_bionic_con_crash` (expect=KNOWN) y
+  `T6/cc_headers_bionic_que_tcc_parsea` (verde, fija la cobertura real).
 - **`bun install` no borra el directorio de una dep podada**: quitar una dep
   de `package.json` y reinstalar actualiza `bun.lock` (la dep desaparece del
   grafo) pero deja `node_modules/<dep>` materializado y todavía resoluble por
@@ -104,6 +125,59 @@ como limitación consciente.
   main↔worker pierde el primer mensaje si el listener del worker aún no está
   registrado: hay que sincronizar (el worker avisa por `parentPort` y recién
   ahí se postea).
+- Formas de API que se asumen mal y **no** lo son (todas medidas en A3):
+  `Bun.JSONL` no tiene `stringify`, su segunda clave es `parseChunk` y
+  devuelve `{values, read, done, error}`. `Bun.deepMatch(a, b)` toma el
+  **patrón primero** (`deepMatch({a:1},{a:1,b:2})` es `true`, al revés `false`)
+  y los arrays **no** son subconjuntos. `Bun.Glob.scanSync()` es un generador:
+  hay que materializarlo con `[...]`. `Bun.mmap` acepta `(path)` y
+  `(path, opts)`; `mmap(n, path)` y `mmap(path, offset, len)` lanzan.
+  `Bun.sliceAnsi` re-cierra el color con `\x1b[39m`, y `Bun.wrapAnsi("abc",
+  código)` no agrega nada visible al string. `Bun.sha("hola")` da 32 bytes
+  deterministas pero **no** es SHA-256 (empieza `49 11 de…` contra
+  `b2 21 d9…` de `CryptoHasher("sha256")`).
+- Los **import attributes** cachean por *specifier*, no por attribute:
+  importar el mismo URL con `{type:"file"}` y después con `{type:"text"}`
+  devuelve el primer módulo resuelto (y un `#fragmento` no fuerza re-resolver).
+  Además `with {type:"file"}` devuelve la **ruta absoluta**, no el contenido,
+  en todas las formas de specifier (relativo, `file://`, con `?query`).
+- `bun:test` exporta `spyOn`, **no** `spy`: importar `spy` es `SyntaxError` y
+  se lee como un `rc=1` de cobertura.
+- `node:vm` es cross-realm: `runInNewContext("[b, typeof a]", {b:5})` devuelve
+  un array del realm del script, que no es `===` a un literal del fixture (y
+  `instanceof Array` tampoco). Comparar por contenido.
+
+## Stubs de producto medidos en A3 (no son del port: fallan igual arriba)
+
+Cuatro APIs existen en el namespace pero no hacen nada útil. Cada una fue
+medida en el ELF android **y** en el `bun-linux-x64` 1.4.2 oficial (job
+`probe-upstream-parity`, run `37787168311`), y tres también en el oráculo
+Android 1.3.14. La regla del plan aplica tal cual: reproduce arriba ⇒ se
+documenta, no se parchea.
+
+| API | qué hace realmente (medido) | upstream linux-x64 |
+|---|---|---|
+| `Bun.Archive.write(path, {files})` | crea un archivo de 10.240 B cuya magic es `"fi"`, **no** `"PK"`; `new Bun.Archive({file}).files` lista **0** entradas | rojo igual (`magic=fi size=10240`) |
+| `Bun.Image` | `.width`/`.height` = `-1`×`-1` sobre un PNG 1×1 válido; los métodos de encode no devuelven nada; `Bun.Image.backend` es el string `"bun"` y no existe `Bun.Image.from` | rojo igual (`dims=-1x-1`) |
+| `Bun.CSRF` | `generate(secret)` devuelve 86 chars pero `verify(secret, token)` con **el mismo secret** devuelve `false`; solo estáticos (`new Bun.CSRF(…)` → "Object is not a constructor"; objeto como argumento → "Secret must be a non-empty string") | rojo igual |
+| `Bun.indexOfLine(string, pos)` | `-1` con string; con `Buffer` sí funciona (`4` en `"a\nbb\nccc"`). La semántica es "índice del `\n` que cierra la línea que contiene `pos`" | rojo igual (`string=-1`) |
+
+Nada de esto toca `patches/android/`: ni la lectura de los buffers ni el
+layout del archivo dependen de bionic. Cualquier fix sería mantención de
+código de producto ajena al port.
+
+Dos más, del runner y de una dependencia:
+
+- **`bun test --coverage` sale 0 pero no imprime tabla de porcentajes.** La
+  hipótesis "será del build Android" se **refutó**: en linux-x64 oficial
+  tampoco imprime nada (mismo run). Idéntico en el oráculo 1.3.14.
+- **`bun:sqlite` no tiene `function`/`backup`/`deserialize`** en el prototype
+  (sólo `clearQueryCache, close, exec, fileControl, handle, inTransaction,
+  loadExtension, prepare, query, run, serialize, transaction`) y
+  `db.loadExtension(path)` lanza `undefined symbol: sqlite3_sqlite3_init`.
+  El mismo symbol error aparece en linux-x64 apuntando a su
+  `libsqlite3.so`, o sea que viene del amálgama de SQLite que embebe
+  upstream, no de nuestro linker.
 
 ## Entorno Termux (medido, sin parche necesario)
 
@@ -115,6 +189,21 @@ como limitación consciente.
   real.
 - Heap tagging: no necesario — el JSC es el prebuilt oficial de upstream y
   el estrés en dispositivo no mostró crashes.
+- **El resolver crudo no tiene a quién preguntar.** `Bun.dns.getServers()`
+  devuelve `["127.0.0.1"]`: Android publica dnsproxyd en loopback y ese
+  puerto **no responde** desde el uid de Termux (medido: un `sendto` UDP a
+  `127.0.0.1:53` no recibe nunca, no es `ECONNREFUSED`). Caen por el mismo
+  motivo todos los caminos crudos — `node:dns.promises.resolve4()` cuelga y
+  `Bun.dns.resolve(..., {verb:true})` lanza `queryA ETIMEOUT` **tras ~21 s**
+  (medido 20792 ms; si un fixture le pone una carrera de 20 s afirma el error
+  del wrapper, no el de bun) — mientras la ruta de sistema funciona
+  (`node:dns.promises.lookup()` da `104.20.23.154`).
+  No hay `/etc/resolv.conf` ni `net.dns*` que setear. Nota para leer logs: el
+  proceso sí muere limpio tras el `ETIMEOUT` (`rc=0`); si un probe con
+  `dgram` queda vivo es el socket propio sin cerrar, no el port.
+- Sockets unix: funcionan sobre bionic (`Bun.serve({unix})`, `fetch(...,
+  {unix})`, `Bun.listen({unix, socket})` servido a un cliente `node:net`), así
+  que nada que dependa de AF_UNIX necesita workaround.
 
 ## Build / CI
 

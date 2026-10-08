@@ -10,6 +10,20 @@ EXPECTED=${2:-1.4.2}
 
 BIN_DIR="$HOME/.bun-android/bin"
 mkdir -p "$BIN_DIR"
+
+# Validar ANTES de tocar la instalación: este script escribía primero y
+# chequeaba después, y un ELF viejo o mal apuntado (source==dest incluye el
+# caso) downgradeaba el binario verificado. Medido en vivo 2026-10-08.
+if [ "$SRC" -ef "$BIN_DIR/bun" ]; then
+  echo "SRC y el instalado son el mismo archivo; nada que instalar." >&2
+  exit 1
+fi
+src_version=$("$SRC" --version 2>&1) || { echo "ELF de CI no ejecutable: $src_version" >&2; exit 1; }
+if [ "$src_version" != "$EXPECTED" ]; then
+  echo "$SRC reporta '$src_version', esperado '$EXPECTED': NO instalo." >&2
+  exit 1
+fi
+
 install -m 755 "$SRC" "$BIN_DIR/bun"
 
 echo "=== installed ==="

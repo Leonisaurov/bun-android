@@ -50,12 +50,13 @@ objetivo completo de paridad son los smokes medidos, no una declaración de
 "paridad total" (bundler y installs grandes quedan fuera de lo afirmado; FFI
 ya no: tiene su oleada T6).
 
-## Batería amplia T1–T9
+## Batería amplia T1–T10
 
 Los cuatro verificadores de arriba son **dirigidos**: cada uno cubre un
-parche. La batería mide la superficie en bulk (126 casos, 9 tiers) y fue la
-herramienta de las auditorías A1 (T1–T8) y A2 (extensión + T9) de
-`PROGRESS.md`.
+parche. La batería mide la superficie en bulk (155 casos, 10 tiers) y fue la
+herramienta de las auditorías A1 (T1–T8), A2 (extensión + T9), A3 (T10,
+superficie de producto y del runner) y A4 (causa raíz del crash de libtcc +
+receta verde) de `PROGRESS.md`.
 
 ```sh
 # en tmux, sin bloquear la sesión; capturar el pane. El `echo rc=$?` va DENTRO
@@ -70,7 +71,7 @@ Flags (`--list` imprime el manifiesto sin ejecutar):
 | Flag | Efecto |
 |---|---|
 | `--bun PATH` | binario a testear; por defecto `~/.bun-android/bin/bun` (ruta explícita, nunca PATH) |
-| `--tiers T1,T4` | subconjunto de oleadas; sin flag, T1→T9 |
+| `--tiers T1,T4` | subconjunto de oleadas; sin flag, T1→T10 |
 | `--case ID` | un solo caso (debug de fixture) |
 | `--json OUT` | `summary.json` con `{bun_sha, bun_revision, tier, case, rc, dur, verdict}` por caso |
 | `--min-free-mb N` | gate de disco: aborta **antes** de crear scratch si hay menos espacio |
@@ -83,7 +84,11 @@ reales sobre TCP y TLS locales · T4 storage (`bun:sqlite` archivo+WAL,
 instalador, `bun test`, `bun build`/`bunx` · T6 FFI/TinyCC · T7 `--compile` ·
 T8 edges Termux (seccomp por syscall, RLIMIT, paths UTF-8/espacios,
 case-sensitivity, heap, fd leaks, TZ/IANA, señales a hijos) · T9 APIs de
-producto (`Bun.Transpiler`, `Bun.password`) y los gaps propios de 1.4.x.
+producto (`Bun.Transpiler`, `Bun.password`) y los gaps propios de 1.4.x · T10
+superficie de producto y del runner (`Bun.TOML/YAML/JSON5/JSONL/XML/semver/
+deepMatch/ANSI/mmap/Glob/zstd/peek/dns`, sockets unix con `Bun.serve` y
+`Bun.listen`, `bun --watch`, `node:vm`, import attributes, `await using`,
+`bun test --coverage`, WebCrypto/Intl).
 Manifiesto: [`tests/fixtures/cases.txt`](../tests/fixtures/cases.txt)
 (`TIER|archivo|nombre|timeout_s|expect` — segundos, no ms); cada caso es un
 `.mjs` que exita 0/1 y se autolimpia, con helpers en
@@ -143,19 +148,27 @@ Un `KNOWN` sólo es honesto si se sabe **de quién es**. El workflow
 dispatch-only [`.github/workflows/probe-upstream-parity.yml`](../.github/workflows/probe-upstream-parity.yml)
 baja el `bun-linux-x64` **oficial** del tag que se le pase (`inputs.bun_version`,
 sin rebuild) y corre [`tests/parity-probe/cases.mjs`](../tests/parity-probe/cases.mjs)
-contra él y contra `node` como referencia. No construye nada del port: es
-medición, no productora del ELF (en ubuntu-latest no hay Bionic ni seccomp).
+contra él y contra `node` como referencia. Desde A4 hay un segundo job,
+`probe-aarch64`, que corre el mismo archivo contra el `bun-linux-aarch64`
+oficial en runner ARM — separa arquitectura de SO cuando un rojo del teléfono
+puede ser del backend arm64 de una dependencia vendored. No construye nada del
+port: es medición, no productora del ELF (en ubuntu no hay Bionic ni seccomp).
 
 ```sh
 gh workflow run probe-upstream-parity.yml -f bun_version=1.4.2
 gh run watch <run-id>
-gh run download <run-id> -n parity-probe-logs   # linux-x64.log, node.log
+gh run download <run-id> -n parity-probe-logs           # linux-x64.log, node.log
+gh run download <run-id> -n parity-probe-logs-aarch64   # linux-aarch64.log
 ```
 
 Salida por línea: `nombre|OK|detalle` o `nombre|ROJO|error`. La decisión de
 triage se toma comparando: rojo acá + verde upstream ⇒ nuestro (parche); rojo
 en ambos ⇒ upstream (doc); verde acá + rojo upstream ⇒ documentación del fix.
-Los casos que pueden crashear ya se corren en hijo dentro de la sonda.
+Los casos que pueden crashear se corren en **hijo** dentro de la sonda (un
+SIGSEGV en el proceso del probe se llevaría el log entero), y los bugs
+sensibles al layout de memoria se miden como **tasa** (ej.
+`cc_pragma_once_tasa_de_crash_20`: 20 hijos del mismo repro; 12/20 en el
+oficial x64, 13/20 en el aarch64, 20/20 en nuestro ELF android).
 
 ## Cómo medir antes de parchear
 
