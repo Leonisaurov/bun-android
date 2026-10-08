@@ -1,7 +1,7 @@
 // T6 · bun:ffi y TinyCC en Bionic: la cadena de gates 0002/0003/0005/0006, mas
 // el ABI aarch64 real (ptr, i64, f64) y las limitaciones portadas a proposito.
 import { cc, dlopen, FFIType, JSCallback, ptr } from "bun:ffi";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { assert, caseMain, CASE_DIR, eq, requirePath, skip, withTimeout } from "./lib.mjs";
 
@@ -161,10 +161,9 @@ const cases = {
   },
 
   // Crash medido: ciertos headers bionic matan libtcc (SIGSEGV en la etapa de
-  // compile, no de enlace). Se aislo por hoja: <errno.h> pica entero aunque su
-  // unico include (linux/errno.h) compile solo. El caso se corre en un HIJO
-  // para que el crash no se lleve la bateria. KNOWN hasta que tinycc soporte
-  // bionic (ver docs/KNOWN-ISSUES.md).
+  // compile, no de enlace). El caso se corre en un HIJO para que el crash no se
+  // lleve la bateria. KNOWN por el conjunto completo de headers; la causa y la
+  // receta están medidas en cc_pragma_once_colision_de_basename_con_recipe.
   cc_headers_bionic_con_crash: async () => {
     requirePath(`${TERMUX_PREFIX}/include/errno.h`, "headers de Termux");
     const flags = `${TCC_ANDROID_DEF} -I${TERMUX_PREFIX}/include -L${BIONIC_DIR} -lc`;
@@ -178,6 +177,68 @@ const cases = {
       cmd: [process.execPath, runner, src], cwd: CASE_DIR, stdout: "pipe", stderr: "pipe",
     }).exited);
     eq(r, 0, "errno.h de bionic compila sin matar el proceso");
+  },
+
+  // Causa del crash anterior, acotada a dos lineas de header (A5, sondas
+  // a5c..a5h en $PREFIX/tmp): libtcc sega —determinista, 3/3— cuando un archivo
+  // declarado con `#pragma once` trae por debajo OTRO archivo con el mismo
+  // basename. Bionic lo pica porque `errno.h` usa pragma once e incluye
+  // `<linux/errno.h>`; glibc no, porque usa include guards (por eso el mismo
+  // repro es verde en linux-x64). No es codigo de nuestros parches: es del
+  // preprocessor de la dependencia vendored. La receta medida: un shadow-dir
+  // con el pragma quitado, que ademas deja `errno` funcional.
+  cc_pragma_once_colision_de_basename_con_recipe: async () => {
+    requirePath(`${TERMUX_PREFIX}/include/errno.h`, "headers de Termux");
+    const runner = P("run-pragma.mjs");
+    writeFileSync(runner,
+      'import { cc } from "bun:ffi";\n' +
+      "const lib = cc({ source: process.argv[2], symbols: { f: { returns: \"i32\", args: [] } },\n" +
+      "  flags: process.argv[3] });\n" +
+      'console.log("RET=" + lib.symbols.f());\n');
+
+    const run = async (src, flags) => {
+      const p = Bun.spawn({ cmd: [process.execPath, runner, src, flags], cwd: CASE_DIR, stdout: "pipe", stderr: "ignore" });
+      const rc = await withTimeout(45000, () => p.exited);
+      const out = (await new Response(p.stdout).text()).trim();
+      return { rc, out };
+    };
+
+    // (a) repro minimo: errno.h con pragma once que incluye x/errno.h.
+    const col = P("col");
+    mkdirSync(path.join(col, "x"), { recursive: true });
+    writeFileSync(path.join(col, "errno.h"), "#pragma once\n#include <x/errno.h>\n");
+    writeFileSync(path.join(col, "x", "errno.h"), "int marker_col;\n");
+    const srcCol = path.join(col, "case.c");
+    writeFileSync(srcCol, "#include <errno.h>\nint f(void){ return 42; }\n");
+    const base = (dir) => `-I${dir} ${TCC_ANDROID_DEF} -I${TERMUX_PREFIX}/include -L${BIONIC_DIR} -lc`;
+    const crash = await run(srcCol, base(col));
+    assert(crash.rc === 139 || crash.rc === 134, "la colision de basename debe matar al hijo (si deja de morir, tinycc se arreglo y hay que re-leer este caso): rc=" + crash.rc);
+
+    // (b) mismo contenido sin `#pragma once`: verde => el pragma es el disparador.
+    writeFileSync(path.join(col, "errno.h"), "#include <x/errno.h>\n");
+    const sinPragma = await run(srcCol, base(col));
+    eq(sinPragma.out, "RET=42", "sin pragma once la misma cadena compila");
+
+    // (c) con pragma pero en otro basename (otro.h -> x/errno.h): verde => es
+    // la colisión de nombres, no el pragma a secas.
+    writeFileSync(path.join(col, "otro.h"), "#pragma once\n#include <x/errno.h>\n");
+    const srcOtro = path.join(col, "case2.c");
+    writeFileSync(srcOtro, "#include <otro.h>\nint f(void){ return 42; }\n");
+    const otro = await run(srcOtro, base(col));
+    eq(otro.out, "RET=42", "pragma once con basename distincto compila");
+
+    // (d) la receta sobre el header real: copia de errno.h sin el pragma, con
+    // -I del shadow DELANTE, y `errno` de verdad funcionando (EAGAIN = 11).
+    const shadow = P("shadow");
+    mkdirSync(shadow, { recursive: true });
+    const real = readFileSync(`${TERMUX_PREFIX}/include/errno.h`, "utf8");
+    assert(real.includes("#pragma once"), "el errno.h de bionic usa pragma once (si cambio, revisar la receta)");
+    writeFileSync(path.join(shadow, "errno.h"), real.replace("#pragma once\n", ""));
+    const srcRecipe = P("recipe.c");
+    writeFileSync(srcRecipe, '#include <errno.h>\nint f(void){ errno = EAGAIN; return errno; }\n');
+    const recipe = await run(srcRecipe, base(shadow));
+    eq(recipe.rc, 0, "la receta no mata el proceso");
+    eq(recipe.out, "RET=11", "errno funcional con el shadow delante (EAGAIN=11)");
   },
 };
 

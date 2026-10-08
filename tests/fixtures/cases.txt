@@ -98,6 +98,7 @@ T6|t6-ffi.mjs|cc_libc_symbols_resueltos_con_flags|60|PASS
 T6|t6-ffi.mjs|cc_libc_por_bun_tcc_options|90|PASS
 T6|t6-ffi.mjs|cc_headers_bionic_que_tcc_parsea|90|PASS
 T6|t6-ffi.mjs|cc_headers_bionic_con_crash|90|KNOWN
+T6|t6-ffi.mjs|cc_pragma_once_colision_de_basename_con_recipe|180|PASS
 T7|t7-compile.mjs|compile_hello_and_run|300|PASS
 T7|t7-compile.mjs|compile_args_and_env|300|PASS
 T7|t7-compile.mjs|compile_relative_import_and_cwd|300|PASS
@@ -148,6 +149,7 @@ T10|t10-producto.mjs|await_using_con_async_dispose|30|PASS
 T10|t10-producto.mjs|test_runner_con_mock_spyon_y_coverage|90|PASS
 T10|t10-producto.mjs|sqlite_load_extension_falla_sin_matar|45|PASS
 T10|t10-producto.mjs|dns_getservers_devuelve_el_loopback_de_android|30|PASS
+T10|t10-producto.mjs|dns_ruta_sistema_vive_y_la_cruda_no|90|PASS
 T10|t10-producto.mjs|standalone_flag_y_embedded_files_fuera_de_compile|30|PASS
 T10|t10-producto.mjs|sha_y_cryptohasher_valores_fijos|30|PASS
 T10|t10-producto.mjs|archive_zip_roundtrip_real|60|KNOWN

@@ -363,5 +363,59 @@ await W("import_attribute_cache_por_specifier", async () => {
   if (despues.default === primero.default) throw new Error("el segundo attribute no re-resuelve: sigue dando la ruta cacheada");
   return "los dos atributos resuelven distinto (el cache no interfiere)";
 });
+// Dos casos de libtcc, medidos primero en el ELF android (sondas a5* en el
+// telefono). Se corren en un HIJO porque uno de ellos esta esperado que
+// SIGSEGEE: si crasha en el proceso del probe se lleva el log entero.
+const ccRunner = file("pp-cc-run.mjs",
+  'import { cc } from "bun:ffi";\n' +
+  "const lib = cc({ source: process.argv[2], symbols: { f: { returns: 'i32', args: [] } },\n" +
+  "  flags: process.argv[3] || undefined });\n" +
+  'console.log("RET=" + lib.symbols.f());\n');
+const runCc = async (src, flags) => {
+  const p = Bun.spawn({ cmd: [process.execPath, ccRunner, src, flags || ""], cwd: D, stdout: "pipe", stderr: "pipe" });
+  const rc = await wt(60000, p.exited);
+  let out = "";
+  try { out = (await new Response(p.stdout).text()).trim(); } catch {}
+  let err = "";
+  try { err = (await new Response(p.stderr).text()).trim(); } catch {}
+  return { rc, out, err };
+};
+
+// (1) Colision de basename con `#pragma once`: en android sega a libtcc. La
+//     convencion del log se mantiene: OK = funciona aca, ROJO = falla aca
+//     tambien. Device-ROJO + sonda-ROJO => bug de tinycc upstream (atribucion
+//     del KNOWN confirmada); device-ROJO + sonda-OK => especifico de nuestro
+//     build y hay que abrirlo.
+await W("cc_pragma_once_colision_de_basename", async () => {
+  if (isNode) throw new Error("solo-bun (bun:ffi cc)");
+  const dir = path.join(D, "pp-pragma");
+  fs.mkdirSync(path.join(dir, "x"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "errno.h"), "#pragma once\n#include <x/errno.h>\n");
+  fs.writeFileSync(path.join(dir, "x", "errno.h"), "int marker_pp;\n");
+  const src = path.join(dir, "case.c");
+  fs.writeFileSync(src, "#include <errno.h>\nint f(void){ return 42; }\n");
+  const r = await runCc(src, "-I" + dir);
+  if (r.rc !== 0 || r.out !== "RET=42") {
+    const err = r.err.split("\n").map((l) => l.trim()).filter(Boolean).slice(-1)[0] || "";
+    throw new Error(`falla aca tambien (rc=${r.rc}) ${err}`.slice(0, 90));
+  }
+  return "compila y corre (RET=42)";
+});
+
+// (2) float.h: tcc sirve stddef.h/stdarg.h como headers embebidos; en android
+//     NO sirve float.h (y bionic lo necesita desde limits.h). Sonda-OK =
+//     linux-x64 si lo sirve => el gap podria ser de nuestra cadena de build y
+//     hay que mirarlo; sonda-ROJO = tinycc tampoco lo trae arriba => documentar.
+await W("cc_builtin_headers_float_h", async () => {
+  if (isNode) throw new Error("solo-bun (bun:ffi cc)");
+  const src = file("pp-float.c", "#include <float.h>\nint f(void){ return FLT_RADIX; }\n");
+  const r = await runCc(src, "");
+  if (r.rc !== 0 || r.out !== "RET=2") {
+    const msg = r.err.split("\n").map((l) => l.trim()).filter((l) => /error|not found/i.test(l)).slice(-1)[0] || `rc=${r.rc}`;
+    throw new Error(`tampoco aca: ${msg.slice(0, 60)}`);
+  }
+  return "float.h builtin servido (RET=2)";
+});
+
 console.log(`runtime: ${isNode ? "node " + process.version : "bun " + Bun.version}`);
 console.log(R.join("\n"));

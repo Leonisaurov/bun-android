@@ -297,8 +297,29 @@ const cases = {
     for (const s of servers) {
       assert(/^(\d+\.){3}\d+$|^[0-9a-fA-F:]+$/.test(s), "cada resolver es una IP: " + s);
     }
-    // Termux: el resolver que ve bun es el loopback del dnsproxyd de Android
-    // (127.0.0.1), unreachable desde el uid — la causa del KNOWN de node:dns.
+    // Termux: el resolver que ve bun es el loopback del dnsproxyd de Android,
+    // unreachable desde el uid — la causa del KNOWN de node:dns.
+    eqJSON(servers, ["127.0.0.1"], "el único resolver visible es el loopback de dnsproxyd");
+  },
+
+  dns_ruta_sistema_vive_y_la_cruda_no: async () => {
+    // Dos caminos al DNS y solo uno tiene a quién preguntar en Termux. Medido:
+    // lookup() (getaddrinfo, ruta del sistema) resuelve; los crudos, que van a
+    // 127.0.0.1:53, no reciben nunca respuesta (no es ECONNREFUSED: timeout).
+    const { default: dnsPromises } = await import("node:dns/promises");
+    const got = await withTimeout(20000, () => dnsPromises.lookup("example.com"));
+    assert(/^\d+\.\d+\.\d+\.\d+$/.test(got.address), "lookup() resuelve por getaddrinfo: " + JSON.stringify(got));
+    let crude = "no lanzó";
+    try {
+      // Sin carrera de timeout propia: el ETIMEOUT nativo tarda ~21 s (medido
+      // 20792ms) y envolverlo hacía que el caso afirmara el error del wrapper.
+      await Bun.dns.resolve("example.com", { verb: true });
+    } catch (e) {
+      crude = String(e.message ?? e);
+    }
+    assert(/ETIMEOUT|queryA|timed out|ENOTFOUND/i.test(crude), "el resolver crudo falla con timeout, no con datos: " + crude);
+    // Regla de lectura: si este caso cuelga *después* del fallo, el problema es
+    // un socket propio sin cerrar; el fallo limpio mata el proceso (rc=0 medido).
   },
 
   standalone_flag_y_embedded_files_fuera_de_compile: () => {
