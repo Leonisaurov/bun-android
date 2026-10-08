@@ -1,0 +1,113 @@
+name: probe-upstream-parity
+run-name: "sonda upstream ${{ inputs.bun_version }}"
+
+# Job de MEDICION, no de gate. Baja el bun OFICIAL de GitHub Releases para
+# linux-x64 y corre tests/parity-probe/cases.mjs — el mismo archivo que se
+# corre en el telefono. Clasifica un rojo: si el binario oficial de la misma
+# version falla identico en linux, es upstream (documentar, no parchear); si
+# solo falla el nuestro, es del port y hay que parchear. No publica nada, no
+# toca el arbol pineado de build-android.yml ni sus caches.
+
+"on":
+  workflow_dispatch:
+    inputs:
+      bun_version:
+        description: "Version oficial a sondear (tag bun-v<version>)"
+        type: string
+        default: "1.4.2"
+        required: true
+      also_node:
+        description: "Correr ademas la referencia Node del runner"
+        type: boolean
+        default: true
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bun-android-probe-upstream
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ inputs.bun_version }}
+      ALSO_NODE: ${{ inputs.also_node }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          # Allow-list estricta: la version solo puede ser X.Y.Z. Nada de
+          # metacaracteres llega a la URL ni al shell.
+          printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "bun_version invalido: '$VERSION' (esperado X.Y.Z)" >&2
+            exit 1
+          }
+
+      - name: Download official bun linux-x64
+        run: |
+          set -euo pipefail
+          URL="https://github.com/oven-sh/bun/releases/download/bun-v${VERSION}/bun-linux-x64.zip"
+          echo "bajando $URL"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/bun.zip" "$URL"
+          mkdir -p "$RUNNER_TEMP/dl"
+          unzip -q -o "$RUNNER_TEMP/bun.zip" -d "$RUNNER_TEMP/dl"
+          BIN="$(find "$RUNNER_TEMP/dl" -name bun -type f -print -quit)"
+          test -n "$BIN" || { echo "no habia binario en el zip" >&2; exit 1; }
+          chmod +x "$BIN"
+          "$BIN" --revision | tee "$GITHUB_WORKSPACE/revision.txt"
+          sha256sum "$BIN" | tee "$GITHUB_WORKSPACE/bin-sha.txt"
+          echo "BIN=$BIN" >> "$GITHUB_ENV"
+
+      - name: Run probe with official bun
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/parity"
+          out="$GITHUB_WORKSPACE/linux-x64.log"
+          ( cd "$RUNNER_TEMP/parity"
+            TZ=America/Argentina/Buenos_Aires "$BIN" "$GITHUB_WORKSPACE/tests/parity-probe/cases.mjs"
+          ) >"$out" 2>&1
+          rc=$?
+          {
+            echo "### bun linux-x64 ${VERSION} (rc=${rc})"
+            echo '```'
+            cat "$out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "rc_bun_oficial=${rc}"
+
+      - name: Run probe with node (referencia)
+        if: ${{ env.ALSO_NODE == 'true' }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/parity-node"
+          out="$GITHUB_WORKSPACE/node.log"
+          ( cd "$RUNNER_TEMP/parity-node"
+            TZ=America/Argentina/Buenos_Aires node "$GITHUB_WORKSPACE/tests/parity-probe/cases.mjs"
+          ) >"$out" 2>&1
+          rc=$?
+          {
+            echo "### node $(node --version) (rc=${rc})"
+            echo '```'
+            cat "$out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "rc_node=${rc}"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-probe-logs
+          path: |
+            linux-x64.log
+            node.log
+            revision.txt
+            bin-sha.txt
+          if-no-files-found: warn
+          retention-days: 30
