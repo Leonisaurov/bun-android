@@ -417,5 +417,29 @@ await W("cc_builtin_headers_float_h", async () => {
   return "float.h builtin servido (RET=2)";
 });
 
+// (3) Tasa del crash: mismo repro 20 veces en 20 hijos. En el telefono (ELF
+//     android nuestro) medimos 20/20; la primer corrida de la x64 oficial dio
+//     verde y la segunda rojo => el bug es sensible al layout de memoria y
+//     queremos la tasa por arquitectura (x64 vs aarch64 vs android-aarch64).
+//     AFIRMA verde solo si NUNCA crasha (improbable: es el bug upstream).
+await W("cc_pragma_once_tasa_de_crash_20", async () => {
+  if (isNode) throw new Error("solo-bun (bun:ffi cc)");
+  const dir = path.join(D, "pp-pragma-rate");
+  fs.mkdirSync(path.join(dir, "x"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "errno.h"), "#pragma once\n#include <x/errno.h>\n");
+  fs.writeFileSync(path.join(dir, "x", "errno.h"), "int marker_rate;\n");
+  const src = path.join(dir, "case.c");
+  fs.writeFileSync(src, "#include <errno.h>\nint f(void){ return 42; }\n");
+  let crashes = 0, other = 0;
+  for (let i = 0; i < 20; i++) {
+    const r = await runCc(src, "-I" + dir);
+    if (r.rc === 0 && r.out === "RET=42") continue;
+    if (r.rc === 139 || r.rc === 134) crashes++;
+    else other++;
+  }
+  if (crashes === 0 && other === 0) return "0/20 (cero crash aca)";
+  throw new Error(`crashes=${crashes}/20 (otros=${other})`);
+});
+
 console.log(`runtime: ${isNode ? "node " + process.version : "bun " + Bun.version}`);
 console.log(R.join("\n"));
