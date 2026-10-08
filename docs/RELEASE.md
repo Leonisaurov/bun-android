@@ -27,7 +27,7 @@
    ```sh
    gh workflow run release-android.yml --repo Leonisaurov/bun-android \
      -f run_id=<ID-del-run-android-exitoso> -f tag=v1.4.2-android.1 \
-     -f evidence_ref="PROGRESS.md A1 · bateria T1-T8 · run <ID> · sha <SHA>"
+     -f evidence_ref="PROGRESS.md A2 · bateria T1-T9 · run <ID> · sha <SHA>"
    gh run watch <nuevo-run-id> --repo Leonisaurov/bun-android
    ```
 

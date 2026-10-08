@@ -244,17 +244,36 @@ await W("install_pruned_dep_left_on_disk", async () => {
 // (nuestro parche 0006 pasa -nostdlib porque Termux no tiene los dirs FHS).
 await W("cc_uses_libc_symbols", async () => {
   if (isNode) throw new Error("solo-bun (bun:ffi cc)");
-  const { cc } = await import("bun:ffi");
+  const { cc, ptr } = await import("bun:ffi");
   const src = path.join(D, "pp-libc.c");
   fs.writeFileSync(src, "extern unsigned long strlen(const char *);\n" +
     "int len_of(const char *s) { return (int)strlen(s); }\n");
   const lib = cc({ source: src, symbols: { len_of: { returns: "i32", args: ["ptr"] } } });
   const { CString } = await import("bun:ffi");
   const c = new CString("hola-vida");
-  const n = lib.symbols.len_of(c);
+  const n = lib.symbols.len_of(ptr(c));
   c.free?.();
   if (n !== 9) throw new Error("strlen devolvio " + n);
   return "strlen resuelto desde C compilado en runtime";
+});
+// Clasificacion del crash medido en Termux: ahi <errno.h> mata libtcc con
+// SIGSEGV. En HIJO para que el crash no se lleve el resto de la sonda.
+await W("cc_include_errno_h", async () => {
+  if (isNode) throw new Error("solo-bun (bun:ffi cc)");
+  const src = path.join(D, "pp-errno.c");
+  fs.writeFileSync(src, "#include <errno.h>\nint f(void) { errno = 0; return errno; }\n");
+  const runner = path.join(D, "pp-errno-run.mjs");
+  fs.writeFileSync(runner, 'import { cc } from "bun:ffi";\n' +
+    'const l = cc({ source: process.argv[2], symbols: { f: { returns: "i32", args: [] } } });\n' +
+    'console.log("RET=" + l.symbols.f());\n');
+  const r = Bun.spawnSync({ cmd: [process.execPath, runner, src], cwd: D, stdout: "pipe", stderr: "pipe" });
+  const out = r.stdout.toString().trim();
+  if (r.exitCode !== 0) {
+    throw new Error(/panic/.test(r.stderr.toString())
+      ? "CRASH de libtcc (rc=" + r.exitCode + " senal)"
+      : "rc=" + r.exitCode + " " + (out || r.stderr.toString().replace(/\n/g, " ").slice(0, 90)));
+  }
+  return out;
 });
 console.log(`runtime: ${isNode ? "node " + process.version : "bun " + Bun.version}`);
 console.log(R.join("\n"));

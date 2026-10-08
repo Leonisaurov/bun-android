@@ -10,22 +10,44 @@ como limitación consciente.
   getaddrinfo funcionan, pero el resolver crudo de `node:dns` (`resolve`,
   `resolveAny` con servidor explícito) nunca resuelve ni rechaza: el proceso
   queda vivo para siempre (mediado con `8.8.8.8` y con el router). Idéntico en
-  el android oficial 1.3.14 ⇒ limitación de entorno (Termux no tiene
-  `/etc/resolv.conf`), **sin parche**. Caso medido: `T2/node_dns_raw_resolve`
-  (expect=KNOWN en la batería).
+  el android oficial 1.3.14 y, a la inversa, **verde en el linux-x64 oficial
+  1.4.2** (run `37780014509`: `dns_raw_resolve|OK|["104.20.23.154", …]`) ⇒ el
+  código está bien, es el entorno: Termux no tiene `/etc/resolv.conf` ni
+  `/system/etc/resolv.conf`, y las props `net.dns1`/`net.dns2`/`dns.server`
+  están vacías (Android saca los resolvers por el canal privado de
+  `dnsproxyd`, que no es alcanzable desde un binario de app sin root).
+  **Sin parche**: inventar un resolver hardcodeado sería peor que el fallo.
+  Caso medido: `T2/node_dns_raw_resolve` (expect=KNOWN en la batería).
 - **Shim `node` de `bun run`**: parcheado con
   [`0007`](../patches/android/0007-android-node-shim-dir-termux.patch)
   (shim en `tmp` de Termux); el `const` es compile-time, así que un prefijo
   no estándar vuelve al comportamiento anterior: sin shim, sin crash.
-- **`cc()` de `bun:ffi` sin stdlib**: con el patch 0006 (`-nostdlib`) el
-  código C que referencie símbolos libc necesita resolución explícita
-  adicional del usuario. Idéntico a la era Zig; fuera del smoke de paridad
-  pero es una limitación real de FFI.
+- **Ciertos headers bionic matan libtcc (SIGSEGV en compile)**: con la receta
+  de includes de Termux, `#include <errno.h>`, `<unistd.h>`, `<stdlib.h>`,
+  `<time.h>`, `<fcntl.h>` y `<sys/stat.h>` tiran el proceso con
+  `panic(main thread): Segmentation fault` **en la etapa de compilación** (el
+  hijo muere 139 antes de devolver). Bisección por hoja medida en A2: los
+  `linux/*.h` y los `bits/*.h` individuais compilan solos, y `bits/wait.h`
+  pica por su cuenta, así que el crash lo produce la composición del header
+  de bionic, no un token aislado. Mitigaciones por `-D` probadas y **sin**
+  efecto: `-D_FORTIFY_SOURCE=0`, `-D_Nullable= -D_Nonnull=`. Los headers que
+  sí parsean hoy: `<string.h>`, `<stdio.h>`, `<dlfcn.h>`, `<stddef.h>`
+  (builtin de tcc), `<stdint.h>`, `<malloc.h>`, `<alloca.h>`, `<xlocale.h>`.
+  Causa de fondo: oven-sh/tinycc no tiene soporte bionic — es exactamente el
+  motivo por el que upstream apagaba TinyCC en Android antes del patch 0002,
+  y re-habilitarlo fue decisión del port. **Sin parche posible en este loop**
+  (sería trabajo dentro del C preprocessor de la dependencia vendored, con un
+  ciclo de CI por hipótesis). Casos medidos: `T6/cc_headers_bionic_con_crash`
+  (expect=KNOWN) y `T6/cc_headers_bionic_que_tcc_parsea` (verde, fija la
+  cobertura real).
 - **`bun install` no borra el directorio de una dep podada**: quitar una dep
   de `package.json` y reinstalar actualiza `bun.lock` (la dep desaparece del
   grafo) pero deja `node_modules/<dep>` materializado y todavía resoluble por
-  `require`. Idéntico en 1.3.14 ⇒ comportamiento upstream, sin parche. Caso
-  medido: `T5/install_removes_pruned_dep` (expect=KNOWN).
+  `require`. Reproducido igual en el bun 1.4.2 oficial linux-x64 (run
+  `37780014509`: `node_modules/is-odd sigue materializada…`) y en el oráculo
+  1.3.14 ⇒ comportamiento upstream, sin parche. Detalle medido: con **cero**
+  deps el lockfile vacío sí se borra. Caso medido:
+  `T5/install_removes_pruned_dep` (expect=KNOWN).
 - **Standalone inflado**: `bun build --compile` embebe el runtime ci-build
   con DWARF (~+190 MB). Ver [`STANDALONE.md`](STANDALONE.md).
 - **`EventSource` no existe en 1.4.x**: `typeof EventSource === "undefined"`
@@ -58,6 +80,26 @@ como limitación consciente.
   (con `lang: "ts"` el input se parsea como jsx y falla). `transform()` es
   async; `transformSync()` también existe. `scanImports` devuelve
   `[{kind:"import-statement", path:"./m1"}, …]`.
+- `cc()` de `bun:ffi` **sí** puede linkear libc en Android; el default del port
+  (`-nostdlib`, patch 0006) no lo hace, a propósito. Dos recetas medidas en
+  dispositivo (los dos casos verdes en T6):
+  ```js
+  // por llamada: `flags` REEMPLAZA los defaults (ffi_body.rs:616), no los
+  // agrega; por eso NO hay que repetir -nostdlib.
+  cc({ source, symbols, flags: "-L/apex/com.android.runtime/lib64/bionic -lc" });
+  ```
+  ```sh
+  # o para todo el proceso: escape hatch de upstream (ffi_body.rs:619)
+  BUN_TCC_OPTIONS="-std=c11 -L/apex/com.android.runtime/lib64/bionic -lc" bun app.mjs
+  ```
+  La libc real de bionic está en `/apex/com.android.runtime/lib64/bionic/libc.so`
+  (1.156.440 B); `/system/lib64/libc.so` es un stub de 46 B y **no** sirve para
+  linkear. Buscarla sin `-L` da `library 'c' not found`, y meter `-lc` con
+  `-nostdlib` activo queda sin resolver (medido). Con la receta, `getpid()`
+  desde C compilado en runtime coincide con `process.pid`. Para los headers de
+  Termux hace falta además `-I$PREFIX/include` y
+  `-D__ANDROID_MIN_SDK_VERSION__=28` (si no, `sys/cdefs.h:365` aborta con
+  `#error Unversioned target triples are not supported!`).
 - `BroadcastChannel` es un `EventTarget` (no tiene `.once`), y un canal
   main↔worker pierde el primer mensaje si el listener del worker aún no está
   registrado: hay que sincronizar (el worker avisa por `parentPort` y recién

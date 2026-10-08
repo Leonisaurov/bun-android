@@ -337,6 +337,113 @@ fuera de lo afirmado: suite upstream, bundler/plugin API, NAPI nativo,
 rendimiento y el puente M4. El dispatch de `release-android.yml` **no** se
 ejecutó (requiere autorización explícita del usuario).
 
+## A2 · extensión de superficie y clasificación con upstream (T1–T9) — CERRADO 2026-10-08
+
+**Objetivo declarado por el usuario tras A1**: "extiende los test, tiene que
+todo quedar en verde y funcionar como se espera". A1 cerró 97 casos; A2 mide
+superficie que la batería no tocaba y, sobre todo, **clasifica** cada rojo
+contra el bun oficial de upstream (job `probe-upstream-parity`) para que ningún
+`KNOWN` quede "por dicho".
+
+### Qué se sumó (97 → 126 casos, red de 29)
+
+- **T9 · APIs de producto** (tier nuevo): `Bun.Transpiler` (loaders, minify,
+  `scanImports`), `Bun.password` (bcrypt + argon2id, incluido el throw con
+  hash malformado) y los dos gaps propios de 1.4.x (`EventSource`, handlers
+  globales de worker).
+- T1: `argv0` propio en `Bun.spawn`, `stdout` hacia `Bun.file`.
+- T2: `node:net`, `node:dgram` UDP, `node:tls` server+client, `SharedArrayBuffer`
+  + `Atomics.wait/notify` cross-worker, `BroadcastChannel` main↔worker,
+  `createRequire` con rutas, `readline` sobre stdin, `fs.cpSync`/`readdir`
+  recursivo con symlinks, pipeline `zlib` gzip→archivo.
+- T3: TLS real con CA fijada, rechazo del self-signed por default, lectura de
+  un stream SSE sobre `fetch`.
+- T4: round-trips de compresión nativa (`gzip`/`deflate`/`zstd`, niveles),
+  `Bun.file.slice` con offsets sobre 32 MB + `Bun.hash` del file vs buffer.
+- T5: `bun test` (rc con un fallo), `--frozen-lockfile` + `bun pm ls`,
+  `--preload` con `.env`.
+- T8: TZ/IANA con DST (Buenos Aires, Londres, Santiago y el `RangeError` de
+  una zona inexistente), señal SIGINT a hijo con exit code propio.
+- T6: reescrito a lo medido — receta de libc por `flags` y por
+  `BUN_TCC_OPTIONS`, cobertura real de headers bionic y el crash aislado en
+  hijo (4 casos donde había 1).
+
+### Falsos rojos del harness que hay que registrar
+
+Ninguno era un bug del port, y todos se midieron antes de tocar el fixture:
+
+- `BroadcastChannel` main↔worker colgaba 15 s: **carrera**, el listener del
+  worker no estaba registrado cuando el main posteaba. Sincronía por
+  `parentPort` ("listo") y verde.
+- `Bun.password.verifySync(usuario, "no-un-hash")`: se afirmaba `false` y
+  **lanza** `UnsupportedAlgorithm` (igual en el oráculo 1.3.14) ⇒ el fixture
+  ahora afirma el throw.
+- `minify` del transpiler: se asumió que renombra la función exportada;
+  renombra los **parámetros**. Aserciones derivadas del patrón, no del nombre.
+- `cc({ source: "…código…" })`: en 1.4.x el input hay que pasarlo **como
+  archivo `.c`**; con el código inline tcc lo trata como ruta y da
+  `file '…' not found`.
+- El `rc` de la logfile: lanzar la batería con un wrapper que imprimía su
+  propio status enmascaraba el del runner (exit 0 sin sello). Hoy la receta de
+  `VERIFY.md` hace `echo rc=$?` **dentro** del `sh -c`, y esta corrida quedó
+  sellada `BATTERY_DONE rc=0`.
+
+### Línea base y matriz final (mismo ELF, sin rebuild)
+
+`~/.bun-android/bin/bun` sha256 `31392bdeb78b99591da54a4d468037b5661e8e27bd109f60982e8b368de37e70`,
+`bun --revision` ⇒ `1.4.2-canary.1+39338cc1c` (build del run `37727225410`,
+parche 0007 — el mismo binario con el que cerró A1). Logfile
+`$PREFIX/tmp/battery-logs/a3-full.log` / `a3-full.json`, 13.962 MB libres.
+
+| Tier | casos | PASS | FAIL | KNOWN | vs A1 |
+|---|---|---|---|---|---|
+| T1 CLI | 18 | 18 | — | — | +2 |
+| T2 node compat | 27 | 26 | — | 1 | +9 |
+| T3 http/TLS | 19 | 19 | — | — | +3 |
+| T4 storage | 14 | 14 | — | — | +2 |
+| T5 install/build | 13 | 12 | — | 1 | +3 |
+| T6 FFI/TinyCC | 9 | 8 | — | 1 | +3 net (la limitación pasó a verde) |
+| T7 `--compile` | 4 | 4 | — | — | igual |
+| T8 edges Termux | 17 | 17 | — | — | +2 |
+| T9 APIs producto | 5 | 3 | — | 2 | tier nuevo |
+| **total** | **126** | **121** | **0** | **5** | **0 FAIL, 0 TIMEOUT, 0 SKIP, 0 UNEXPECTED** |
+
+Cierre: `PASS=121 FAIL=0 TIMEOUT=0 SKIP=0 KNOWN=5 UNEXPECTED=0`,
+`BATTERY_DONE rc=0`. Los cuatro verificadores dirigidos siguen verdes (T1–T9
+incluye sus superficies). El oráculo `$PREFIX/bin/bun` (1.3.14) intacto.
+
+### Clasificación de los 5 KNOWN (sonda upstream, runs `37776390386` y `37780014509`)
+
+Oficial `bun-linux-x64` 1.4.2, revisión `1.4.2+744846f84`, sha
+`a83d263767d8…`; referencia adicional `node` v26.
+
+| Caso | upstream linux-x64 | Veredicto |
+|---|---|---|
+| `T9/eventsource_global_available` | indefinido igual acá | gap de la línea 1.4.x, sin parche |
+| `T9/worker_bare_onmessage_global` | hang idéntico (Node lanza `ReferenceError`) | gap de 1.4.x, sin parche |
+| `T5/install_removes_pruned_dep` | dep sigue materializada | comportamiento upstream, sin parche |
+| `T2/node_dns_raw_resolve` | **OK** (`["104.20.23.154", …]`) | entorno Termux: sin `/etc/resolv.conf` ni `net.dns*`; el resolver crudo no tiene a quién preguntar |
+| `T6/cc_headers_bionic_con_crash` | sin equivalente (los headers son de bionic) | limitación del tinycc vendored que re-habilitó el patch 0002; no es código de nuestros parches |
+
+### Decisión de port: no hubo parche 0008
+
+La única limitación que era "nuestra por diseño" (`cc()` sin libc) se resolvió
+midiendo, no parcheando: `flags: "-L/apex/com.android.runtime/lib64/bionic -lc"`
+por llamada y `BUN_TCC_OPTIONS` para todo el proceso (`src/runtime/ffi/ffi_body.rs:616-623`)
+dejan `getpid()`/`strlen()` resueltos y coincidentes con el proceso, y los casos
+están verdes. Un default sin `-nostdlib` **rompería** API 28 sin namespace APEX
+(`library 'c' not found` ya no tendría arreglo), así que el default deliberado
+se queda y la receta se documenta en `KNOWN-ISSUES.md`. Lo que sí quedó abierto
+con evidencia es el SIGSEGV de libtcc con headers bionic compuestos: es trabajo
+de la dependencia vendored (un ciclo de CI por hipótesis), no de este loop.
+
+**Estado del port tras A2**: 7 parches versionados, 126 casos en 9 tiers, 121
+verdes, 5 rojos **todos con causa atribuida** (2 de upstream 1.4.x, 1 de
+comportamiento upstream, 1 del entorno Termux, 1 de la dependencia tinycc), 0
+FAIL/TIMEOUT/SKIP/UNEXPECTED. Sigue fuera de lo afirmado: suite upstream,
+bundler/plugin API, NAPI nativo, rendimiento y el puente M4. `release-android.yml`
+**no** se dispatcheó (requiere autorización explícita).
+
 ## Bitácora
 
 - 2026-10-07: B0 en ejecución; pines verificados (ver manifest); sha256 del
@@ -346,3 +453,12 @@ ejecutó (requiere autorización explícita del usuario).
   `$PREFIX/bin`, accesible como `~/.local/bin/bun1.3.14`). Las menciones
   históricas a `~/.local/bin` arriba reflejan la regla vigente al momento de
   cada evidencia.
+- 2026-10-08: sonda de paridad dispatcheada dos veces (runs `37776390386` y
+  `37780014509`) sobre el `bun-linux-x64` oficial 1.4.2; con eso los 5 `KNOWN`
+  de la batería quedan atribuidos (2 upstream 1.4.x, 1 comportamiento
+  upstream, 1 entorno Termux, 1 tinycc/bionic).
+- 2026-10-08: se midió que `cc()` SÍ linkea libc en Android con
+  `-L/apex/com.android.runtime/lib64/bionic -lc` (y `BUN_TCC_OPTIONS` a nivel
+  proceso), así que la limitación de FFI pasó a verde sin parche. Descartado
+  el patch 0008 de default: sin `-nostdlib` los dispositivos API 28 sin
+  namespace APEX se quedan sin `cc()`.

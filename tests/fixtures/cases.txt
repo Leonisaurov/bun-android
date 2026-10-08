@@ -94,7 +94,10 @@ T6|t6-ffi.mjs|cc_pointer_and_loop|60|PASS
 T6|t6-ffi.mjs|cc_float_and_i64_abi|60|PASS
 T6|t6-ffi.mjs|dlopen_libc_symbols|60|PASS
 T6|t6-ffi.mjs|cc_callback_into_js|60|PASS
-T6|t6-ffi.mjs|cc_libc_reference_limitation|60|KNOWN
+T6|t6-ffi.mjs|cc_libc_symbols_resueltos_con_flags|60|PASS
+T6|t6-ffi.mjs|cc_libc_por_bun_tcc_options|90|PASS
+T6|t6-ffi.mjs|cc_headers_bionic_que_tcc_parsea|90|PASS
+T6|t6-ffi.mjs|cc_headers_bionic_con_crash|90|KNOWN
 T7|t7-compile.mjs|compile_hello_and_run|300|PASS
 T7|t7-compile.mjs|compile_args_and_env|300|PASS
 T7|t7-compile.mjs|compile_relative_import_and_cwd|300|PASS

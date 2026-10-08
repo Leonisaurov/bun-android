@@ -10,6 +10,11 @@ de decisión.
   M3 paridad Termux (parches 0001–0006) · **A1 auditoría amplia de superficie**
   (batería T1–T8 de 97 casos en dispositivo, gate de release corregido, parche
   `0007`; 93 PASS / 0 FAIL / 3 KNOWN / 1 SKIP con `31392bde…`).
+- **A2 extensión y clasificación** (T1–T9, 126 casos: 121 PASS / 0 FAIL / 5
+  KNOWN / 0 SKIP con el mismo ELF `31392bde…`). Los 5 rojos quedan atribuidos
+  con el job `probe-upstream-parity` contra el `bun-linux-x64` oficial 1.4.2, y
+  la limitación de FFI (`cc()` sin libc) se cerró **midiendo** la receta de
+  flags/`BUN_TCC_OPTIONS`, sin parche nuevo.
 - Infra de repo: workflow de build, workflow de publicación (probado en
   negativo), set de docs.
 
@@ -55,10 +60,15 @@ punta a punta. No se migra nada del workspace sin esa evidencia.
   único FAIL de la batería).
 - [ ] RLIMIT/heap: reconsiderar solo con demanda medida. La batería A1 estresó
       50 spawns, 256 MB de heap y cientos de fds sin SIGSYS ni crashes.
-- [ ] Los tres `KNOWN` de A1 siguen abiertos como limitaciones (no parcheables
-      acá): `dns.promises.resolve()` cuelga sin `/etc/resolv.conf`, `bun
-      install` deja el directorio de la dep podada, `cc()` sin stdlib. Cada uno
-      reproduce igual en el oráculo `1.3.14` o es frontera del parche `0006`.
+- [ ] Los 5 `KNOWN` de A2 siguen abiertos, cada uno con su causa atribuida por
+      la sonda upstream (runs `37776390386`/`37780014509`):
+      `dns.promises.resolve()` cuelga sin `/etc/resolv.conf` (verde en linux-x64 ⇒
+      entorno), `bun install` deja la dep podada (rojo también en upstream),
+      `EventSource` y los handlers globales de worker (gap de la línea 1.4.x),
+      y el SIGSEGV de libtcc con headers bionic compuestos (`errno.h`,
+      `unistd.h`, `stdlib.h`, `time.h`, `fcntl.h`, `sys/stat.h`) — eso último
+      es trabajo de la dependencia tinycc vendored, con un ciclo de CI por
+      hipótesis, y es el único candidato real a "volver verde" algo más.
 
 ### 4. Si la superficie crece
 

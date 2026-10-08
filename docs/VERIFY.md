@@ -47,19 +47,22 @@ mkdir -p "$PREFIX/tmp/i" && cd "$PREFIX/tmp/i" && $BUN add ms && $BUN -e 'consol
 
 `bun add` pequeño verde + `ms(1000) === "1s"` = instalador funcional; el
 objetivo completo de paridad son los smokes medidos, no una declaración de
-"paridad total" (bundler, installs grandes o FFI más allá del smoke quedan
-fuera de lo afirmado).
+"paridad total" (bundler y installs grandes quedan fuera de lo afirmado; FFI
+ya no: tiene su oleada T6).
 
-## Batería amplia T1–T8
+## Batería amplia T1–T9
 
 Los cuatro verificadores de arriba son **dirigidos**: cada uno cubre un
-parche. La batería mide la superficie en bulk (97 casos, 8 tiers) y fue la
-herramienta de la auditoría A1 (`PROGRESS.md`).
+parche. La batería mide la superficie en bulk (126 casos, 9 tiers) y fue la
+herramienta de las auditorías A1 (T1–T8) y A2 (extensión + T9) de
+`PROGRESS.md`.
 
 ```sh
-# en tmux, sin bloquear la sesión; capturar el pane
+# en tmux, sin bloquear la sesión; capturar el pane. El `echo rc=$?` va DENTRO
+# del sh -c: afuera mediría el rc del wrapper, no el del runner (error vivido).
 sh -c './scripts/battery-device.sh --json "$PREFIX/tmp/battery-logs/run.json" \
-       > "$PREFIX/tmp/battery-logs/run.log" 2>&1'
+       > "$PREFIX/tmp/battery-logs/run.log" 2>&1; \
+       echo "BATTERY_DONE rc=$?" >> "$PREFIX/tmp/battery-logs/run.log"'
 ```
 
 Flags (`--list` imprime el manifiesto sin ejecutar):
@@ -67,20 +70,24 @@ Flags (`--list` imprime el manifiesto sin ejecutar):
 | Flag | Efecto |
 |---|---|
 | `--bun PATH` | binario a testear; por defecto `~/.bun-android/bin/bun` (ruta explícita, nunca PATH) |
-| `--tiers T1,T4` | subconjunto de oleadas; sin flag, T1→T8 |
+| `--tiers T1,T4` | subconjunto de oleadas; sin flag, T1→T9 |
 | `--case ID` | un solo caso (debug de fixture) |
 | `--json OUT` | `summary.json` con `{bun_sha, bun_revision, tier, case, rc, dur, verdict}` por caso |
 | `--min-free-mb N` | gate de disco: aborta **antes** de crear scratch si hay menos espacio |
 | `--keep` | no borra el scratch (`$PREFIX/tmp/battery-<sha8>-<pid>`, que tiene `trap` de limpieza) |
 
 Tiers: T1 CLI/exit codes/señales · T2 compat `node:*` (fs, os, worker_threads,
-child_process, http, dns) · T3 http y red reales sobre TCP · T4 storage
-(`bun:sqlite` archivo+WAL, `Bun.file`, Blob/FormData, `Bun.hash`) · T5
-instalador y `bun build`/`bunx` · T6 FFI/TinyCC · T7 `--compile` · T8 edges
-Termux (seccomp por syscall, RLIMIT, paths UTF-8/espacios, case-sensitivity,
-heap, fd leaks). Manifiesto: [`tests/fixtures/cases.txt`](../tests/fixtures/cases.txt)
-(`TIER|archivo|nombre|timeout_ms|expect`); cada caso es un `.mjs` que exita
-0/1 y se autolimpia, con helpers en [`tests/fixtures/lib.mjs`](../tests/fixtures/lib.mjs).
+child_process, http, dns, net, dgram, tls, zlib, readline) · T3 http y red
+reales sobre TCP y TLS locales · T4 storage (`bun:sqlite` archivo+WAL,
+`Bun.file`, Blob/FormData, `Bun.hash`, compresión nativa de Bun) · T5
+instalador, `bun test`, `bun build`/`bunx` · T6 FFI/TinyCC · T7 `--compile` ·
+T8 edges Termux (seccomp por syscall, RLIMIT, paths UTF-8/espacios,
+case-sensitivity, heap, fd leaks, TZ/IANA, señales a hijos) · T9 APIs de
+producto (`Bun.Transpiler`, `Bun.password`) y los gaps propios de 1.4.x.
+Manifiesto: [`tests/fixtures/cases.txt`](../tests/fixtures/cases.txt)
+(`TIER|archivo|nombre|timeout_s|expect` — segundos, no ms); cada caso es un
+`.mjs` que exita 0/1 y se autolimpia, con helpers en
+[`tests/fixtures/lib.mjs`](../tests/fixtures/lib.mjs).
 
 Reglas de honestidad del runner (todas nacieron de un falso negativo o falso
 positivo vivido):
@@ -102,12 +109,40 @@ positivo vivido):
 - Un caso que depende de un shim PATH debe correr con un PATH **privado y
   vacío**; con `$PREFIX/bin` dentro, el `node` real de Termux enmascara el gap
   y el caso sale verde mintiendo.
+- Un caso que **puede matar al proceso** (crash nativo, pendulo sin timeout)
+  se corre en un HIJO con `Bun.spawn`/`self`, y se afirma sobre el rc del
+  hijo. Medido en A2: `#include <errno.h>` en libtcc es SIGSEGV puro; si se
+  afirmara en el mismo proceso, la oleada entera se corta y el rojo se lee
+  como del runner.
+- Lo que cambia el entorno del proceso (`BUN_TCC_OPTIONS`, `TZ`, PATH) también
+  se mide en hijo: la batería comparte env y un set in-process contaminaría a
+  los casos siguientes.
 
 **Qué no promete la batería**: no es la suite de tests de upstream (esa exige
 `RLIMIT`/fixtures propios y queda fuera); no mide rendimiento; no cubre NAPI
 nativo ni la plugin API del bundler más allá de `bun build` simple; no prueba
 installs grandes ni registry proxies; y no toca el puente M4 standalone (los
 casos T7 se autolimitan por disco y borran su ELF de ~291 MB en el mismo paso).
+
+## Sonda de paridad contra upstream (`probe-upstream-parity`)
+
+Un `KNOWN` sólo es honesto si se sabe **de quién es**. El workflow
+dispatch-only [`.github/workflows/probe-upstream-parity.yml`](../.github/workflows/probe-upstream-parity.yml)
+baja el `bun-linux-x64` **oficial** del tag que se le pase (`inputs.bun_version`,
+sin rebuild) y corre [`tests/parity-probe/cases.mjs`](../tests/parity-probe/cases.mjs)
+contra él y contra `node` como referencia. No construye nada del port: es
+medición, no productora del ELF (en ubuntu-latest no hay Bionic ni seccomp).
+
+```sh
+gh workflow run probe-upstream-parity.yml -f bun_version=1.4.2
+gh run watch <run-id>
+gh run download <run-id> -n parity-probe-logs   # linux-x64.log, node.log
+```
+
+Salida por línea: `nombre|OK|detalle` o `nombre|ROJO|error`. La decisión de
+triage se toma comparando: rojo acá + verde upstream ⇒ nuestro (parche); rojo
+en ambos ⇒ upstream (doc); verde acá + rojo upstream ⇒ documentación del fix.
+Los casos que pueden crashear ya se corren en hijo dentro de la sonda.
 
 ## Cómo medir antes de parchear
 
