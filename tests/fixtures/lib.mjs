@@ -18,7 +18,21 @@ export function assert(cond, msg) {
 }
 
 export function eq(got, want, msg) {
-  if (got !== want) throw new Error(`${msg}: got ${JSON.stringify(got)} want ${JSON.stringify(want)}`);
+  if (got !== want) {
+    // eq es de identidad: dos arrays/objetos con el mismo contenido SIEMPRE
+    // fallan aqui. Si el JSON coincide, el mensaje lo dice, porque el par
+    // "got X want X" sin pista cuesta media hora de triage.
+    const g = JSON.stringify(got), w = JSON.stringify(want);
+    const hint = g === w ? " (mismo JSON, distinta identidad: arrays/objetos van con eqJSON)" : "";
+    throw new Error(`${msg}: got ${g} want ${w}${hint}`);
+  }
+}
+
+// Structural comparison for the values `eq` cannot express (arrays, objects).
+// Key order matters: pass literals already in the shape you expect.
+export function eqJSON(got, want, msg) {
+  const g = JSON.stringify(got), w = JSON.stringify(want);
+  if (g !== w) throw new Error(`${msg}: got ${g} want ${w}`);
 }
 
 // Spawn the SAME binary under test, so CLI-level behaviour is measured, not

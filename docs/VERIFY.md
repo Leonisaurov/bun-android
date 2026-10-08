@@ -109,11 +109,24 @@ positivo vivido):
 - Un caso que depende de un shim PATH debe correr con un PATH **privado y
   vacío**; con `$PREFIX/bin` dentro, el `node` real de Termux enmascara el gap
   y el caso sale verde mintiendo.
-- Un caso que **puede matar al proceso** (crash nativo, pendulo sin timeout)
+- Un caso que **puede matar al proceso** (crash nativo, péndulo sin timeout)
   se corre en un HIJO con `Bun.spawn`/`self`, y se afirma sobre el rc del
   hijo. Medido en A2: `#include <errno.h>` en libtcc es SIGSEGV puro; si se
   afirmara en el mismo proceso, la oleada entera se corta y el rojo se lee
   como del runner.
+- `eq()` es de **identidad**: dos arrays/objetos con el mismo contenido fallan
+  y el mensaje sale como `got X want X` (idénticos), que cuesta media hora de
+  triage si no se conoce. Para contenido se usa `eqJSON()` (compara
+  `JSON.stringify`). Medido en A3: tres casos de T10 nacieron rojos por esto,
+  no por el binario.
+- Los valores que salen de otro realm (`node:vm`) o de un generador
+  (`Bun.Glob.scanSync`) no son lo que parecen: el array de `vm` es de otro
+  realm, y `scanSync` hay que materializarlo con `[...]`. Un assertion que
+  asuma `Array.isArray` sobre el resultado de `scanSync` es falso rojo.
+- Un `import()` dinámico resuelve el specifier **contra el módulo fixture**, no
+  contra el scratch del caso (`BATTERY_CASE_DIR`). Para un archivo escrito por
+  el caso se importa por `pathToFileURL(abs).href`; con `"./archivo.txt"` el
+  resolver mira `tests/fixtures/` y da `Cannot find module`.
 - Lo que cambia el entorno del proceso (`BUN_TCC_OPTIONS`, `TZ`, PATH) también
   se mide en hijo: la batería comparte env y un set in-process contaminaría a
   los casos siguientes.

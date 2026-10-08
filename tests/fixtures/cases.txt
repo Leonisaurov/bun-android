@@ -125,3 +125,32 @@ T9|t9-apis.mjs|transpiler_minify_y_scan_imports|60|PASS
 T9|t9-apis.mjs|password_bcrypt_y_argon2id|90|PASS
 T9|t9-apis.mjs|eventsource_global_available|30|KNOWN
 T9|t9-apis.mjs|worker_bare_onmessage_global|60|KNOWN
+# T10 · superficie de producto (helpers de Bun, unix sockets, --watch, vm,
+# atributos de import) + los cuatro stubs identicos al oraculo 1.3.14
+T10|t10-producto.mjs|serializers_toml_yaml_json5_jsonl|30|PASS
+T10|t10-producto.mjs|xml_stringify_y_parse|30|PASS
+T10|t10-producto.mjs|zstd_roundtrip_sync_y_async|45|PASS
+T10|t10-producto.mjs|webcrypto_ecdsa_hkdf_y_export|45|PASS
+T10|t10-producto.mjs|intl_collator_es_y_pluralrules|30|PASS
+T10|t10-producto.mjs|semver_satisfies_y_order|30|PASS
+T10|t10-producto.mjs|deep_equals_y_match_direccion|30|PASS
+T10|t10-producto.mjs|ansi_helpers_sobre_codigos_reales|30|PASS
+T10|t10-producto.mjs|peek_desenvuelve_una_promesa_resuelta|30|PASS
+T10|t10-producto.mjs|mmap_de_un_archivo_real|30|PASS
+T10|t10-producto.mjs|unix_socket_serve_y_fetch|45|PASS
+T10|t10-producto.mjs|unix_socket_listen_y_cliente_node_net|60|PASS
+T10|t10-producto.mjs|watch_mode_recarga_el_archivo|90|PASS
+T10|t10-producto.mjs|node_vm_create_context_y_run|45|PASS
+T10|t10-producto.mjs|glob_scan_async_sync_y_match|45|PASS
+T10|t10-producto.mjs|import_attributes_file_y_text|45|PASS
+T10|t10-producto.mjs|import_mismo_specifier_con_otro_attribute_devuelve_la_cacheada|45|PASS
+T10|t10-producto.mjs|await_using_con_async_dispose|30|PASS
+T10|t10-producto.mjs|test_runner_con_mock_spyon_y_coverage|90|PASS
+T10|t10-producto.mjs|sqlite_load_extension_falla_sin_matar|45|PASS
+T10|t10-producto.mjs|dns_getservers_devuelve_el_loopback_de_android|30|PASS
+T10|t10-producto.mjs|standalone_flag_y_embedded_files_fuera_de_compile|30|PASS
+T10|t10-producto.mjs|sha_y_cryptohasher_valores_fijos|30|PASS
+T10|t10-producto.mjs|archive_zip_roundtrip_real|60|KNOWN
+T10|t10-producto.mjs|image_resize_y_encode|60|KNOWN
+T10|t10-producto.mjs|csrf_verify_con_el_mismo_secret|30|KNOWN
+T10|t10-producto.mjs|index_of_line_con_string_con_newline|30|KNOWN

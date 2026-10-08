@@ -275,5 +275,93 @@ await W("cc_include_errno_h", async () => {
   }
   return out;
 });
+// Los cuatro stubs medidos en Termux, mas la tabla de coverage y el
+// loadExtension de sqlite. En el telefono dan EXACTAMENTE esto mismo en el
+// oraculo oficial 1.3.14; si linux-x64 1.4.2 also falla, es gap de la version
+// (documentar); si linux-x64 pasa, es gap del build de Android (documentar).
+await W("archive_zip_magic", async () => {
+  if (isNode) throw new Error("solo-bun (Bun.Archive)");
+  const out = path.join(D, "pp-archive.zip");
+  await Bun.Archive.write(out, { files: [{ name: "a.txt", data: "hola-a" }] });
+  const head = fs.readFileSync(out).subarray(0, 2);
+  const magic = String.fromCharCode(head[0], head[1]);
+  if (magic !== "PK") throw new Error("magic=" + magic + " size=" + fs.statSync(out).size);
+  const files = await new Bun.Archive({ file: Bun.file(out) }).files;
+  if (files.length !== 1) throw new Error("files=" + files.length);
+  return "zip real con 1 entrada";
+});
+await W("image_resize_dims", async () => {
+  if (isNode) throw new Error("solo-bun (Bun.Image)");
+  const src = path.join(D, "pp-px.png");
+  fs.writeFileSync(src, Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64"));
+  const img = new Bun.Image(src);
+  const w = await img.width, h = await img.height;
+  if (w !== 1 || h !== 1) throw new Error("dims=" + w + "x" + h);
+  const out = await img.resize(2, 2).png();
+  const n = out?.byteLength ?? out?.size ?? 0;
+  if (n <= 8) throw new Error("png encode dio " + n + " bytes");
+  return "1x1 leido y reencodeado";
+});
+await W("csrf_verify_mismo_secret", () => {
+  if (isNode) throw new Error("solo-bun (Bun.CSRF)");
+  const t = Bun.CSRF.generate("clave-super-secreta");
+  if (Bun.CSRF.verify("clave-super-secreta", t) !== true) throw new Error("verify devolvio false con el mismo secret");
+  if (Bun.CSRF.verify("otra", t) !== false) throw new Error("verify acepta otro secret");
+  return "token de " + String(t).length + " bytes verificable";
+});
+await W("index_of_line_string", () => {
+  if (isNode) throw new Error("solo-bun (Bun.indexOfLine)");
+  const buf = Bun.indexOfLine(Buffer.from("a\nbb\nccc"), 3);
+  const str = Bun.indexOfLine("a\nbb\nccc", 3);
+  if (buf !== 4) throw new Error("buffer=" + buf);
+  if (str !== 4) throw new Error("string=" + str + " (buffer si da 4)");
+  return "string y buffer coinciden";
+});
+await W("coverage_tabla_en_bun_test", () => {
+  if (isNode) throw new Error("solo-bun (bun test)");
+  const dir = path.join(D, "pp-cov");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "ok.test.ts"),
+    "import { test, expect } from \"bun:test\";\ntest(\"s\", () => expect(1+1).toBe(2));\n");
+  const r = Bun.spawnSync({ cmd: [process.execPath, "test", "--coverage", "ok.test.ts"],
+    cwd: dir, stdout: "pipe", stderr: "pipe" });
+  const out = String(r.stdout) + String(r.stderr);
+  if (r.exitCode !== 0) throw new Error("rc=" + r.exitCode);
+  if (!/%/.test(out)) throw new Error("--coverage no emite tabla de porcentajes");
+  return "tabla de cobertura presente";
+});
+await W("sqlite_load_extension", async () => {
+  if (isNode) throw new Error("solo-bun (bun:sqlite)");
+  const { Database } = await import("bun:sqlite");
+  const db = new Database(":memory:");
+  // La libreria a cargar depende de la plataforma: en android apuntamos a la
+  // libc (no es una extension de sqlite, pero prueba el camino de dlopen).
+  const candidato = process.platform === "android"
+    ? "/apex/com.android.runtime/lib64/bionic/libc.so"
+    : "/usr/lib/x86_64-linux-gnu/libsqlite3.so";
+  try {
+    db.loadExtension(candidato);
+    return "cargo sin error: " + candidato;
+  } catch (e) {
+    throw new Error("throw: " + String((e && e.message) || e).slice(0, 90));
+  }
+});
+// El registro cachea por specifier y el segundo atributo se ignora. Si
+// linux-x64 hace lo mismo, es semantica de 1.4.x (documentar); si no, hay que
+// mirar como lo resuelve nuestro build.
+await W("import_attribute_cache_por_specifier", async () => {
+  if (isNode) throw new Error("solo-bun (import attributes)");
+  const { pathToFileURL } = await import("node:url");
+  const abs = path.join(D, "pp-attr.txt");
+  fs.writeFileSync(abs, "contenido-embebido");
+  const url = pathToFileURL(abs).href;
+  const primero = await import(url, { with: { type: "file" } });
+  const despues = await import(url, { with: { type: "text" } });
+  if (typeof primero.default !== "string") throw new Error("file dio " + typeof primero.default);
+  if (despues.default === primero.default) throw new Error("el segundo attribute no re-resuelve: sigue dando la ruta cacheada");
+  return "los dos atributos resuelven distinto (el cache no interfiere)";
+});
 console.log(`runtime: ${isNode ? "node " + process.version : "bun " + Bun.version}`);
 console.log(R.join("\n"));
