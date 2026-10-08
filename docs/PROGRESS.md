@@ -182,11 +182,51 @@ sha256 `5245f48f…`, 2026-10-07):
 
 ## M4 · standalone 1.4.2 (proyecto aparte, no planeado aquí)
 
-El grafo 1.4.x se inserta antes de las section headers ELF (`e_shoff`
-reubicado, trailer ya no al EOF): reader/ensamblador nuevo en un repo aparte
-`bun-opencode-bridge` con round-trip test. No entra en este repo.
+El grafo 1.4.x ya no es un trailer al EOF (confirmado por medición abajo:
+sección `.bun` + blobs enlazados dentro de `PT_LOAD`): reader/ensamblador
+nuevo en un repo aparte `bun-opencode-bridge` con round-trip test. No entra
+en este repo.
+
+### M4-preliminar · sonda `--compile` en el teléfono — MEDIDA 2026-10-07
+
+Sonda de factibilidad (plan `stoic-swamp-karp` re-enfocado; no toca el port
+cerrado ni construye opencode) con el bun 1.4.2 instalado (sha `899866c5…`)
+en `$PREFIX/tmp/m4-probe/`, bajo `tcr`. Comandos y resultados:
+
+- `bun build --compile ./app.mjs --outfile probe` ⇒ **rc=0** (`[12ms] bundle
+  1 modules`, `[1069ms] compile`). `./probe` ⇒ rc=0, salida `probe 42`;
+  `./probe hola-mundo` ⇒ `arg: hola-mundo`. **`--compile` funciona en
+  android/bionic con nuestros parches** (el riesgo upstream #38246 no se
+  materializó en este binario).
+- `bun add ms` (rc=0, ms@2.1.3) + `bun build --compile ./app2.mjs` ⇒ rc=0,
+  `./probe2` ⇒ rc=0 `dep-probe 1s`: **empaqueta node_modules** (2 modules).
+- Layout medido del ELF generado (`probe`, 291.299.504 B): NO hay trailer al
+  EOF — la tabla de section headers termina exactamente en EOF
+  (`e_shoff=291296624`, 45×64 B ⇒ fin=EOF). El grafo va **dentro de la
+  imagen**: descriptor en la sección `.bun` (0xfa B en `0x54c0000`: u64
+  longitud + fuente `// @bun…`) y los módulos embebidos como datos estáticos
+  (en `probe2` la ruta `node_modules/ms` aparece como string en `0x54BF2B7`,
+  dentro del LOAD RW). Es decir, 1.4.2 no "pega un grafo al final": lo
+  **enlaza** — un ensamblador estilo era-Zig (append + scan de magic al EOF)
+  es estructuralmente insuficiente; el bridge M4 tiene que modelar la
+  sección/`PT_LOAD`, no un footer.
+- Nota de tamaño: `probe` de una hello-world pesa 291 MB porque el runtime
+  embebido conserva las secciones `.debug_*` (~190 MB) del perfil ci-build.
+  Para un standalone útil el bridge va a necesitar strip.
+- sha256 de los sondas: `probe` `a9a939f3…`, `probe2` `108d8529…` (scratch
+  regenerable; ELF grandes eliminados del teléfono tras medir, 4,4 GB libres).
+
+**Veredicto**: sonda verde en las tres preguntas (compila, corre, empaqueta
+deps). El puente M4 sigue siendo proyecto aparte, ahora con formato objetivo
+medido: parser de grafo 1.4.x = lectura de sección `.bun` + blobs en
+`PT_LOAD`, no trailer EOF.
 
 ## Bitácora
 
 - 2026-10-07: B0 en ejecución; pines verificados (ver manifest); sha256 del
   tarball streammeado: `25e09a8804535b8fbea1dad9f95af8402fc9133d28127d5594ff00df1549590e`.
+- 2026-10-07: por instrucción explícita del usuario, el binario validado de
+  M3 se instaló además en `~/.local/bin/bun` (shadowea al bun 1.3.14 de
+  `$PREFIX/bin`, accesible como `~/.local/bin/bun1.3.14`). Las menciones
+  históricas a `~/.local/bin` arriba reflejan la regla vigente al momento de
+  cada evidencia.
