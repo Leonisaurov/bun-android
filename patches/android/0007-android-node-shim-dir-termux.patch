@@ -1,0 +1,47 @@
+From 37f06fe1164d786c6c101799ec96a2947c5db349 Mon Sep 17 00:00:00 2001
+From: Leonisaurov <leonisaurov@gmail.com>
+Date: Wed, 7 Oct 2026 22:22:13 -0600
+Subject: [PATCH] fix(android): el shim `node` de `bun run` necesita un tmp
+ escribible
+
+Medido en dispositivo con el ELF de CI (sha 899866c5, revision
+1.4.2-canary.1+c23b9c226) contra el oraculo android 1.3.14:
+
+  PATH=<dir vacio> bun run probe   # probe = "node -e ..."
+  1.4.2 nuestro -> rc=127, /bin/sh: node: inaccessible or not found
+  1.3.14 oficial -> rc=0, inyecta $TMPDIR/bun-node-fab5250e0 en PATH
+
+Causa: BUN_NODE_DIR elige /data/local/tmp para android
+(src/install/lib.rs). Ese dir no es escribible por el uid de Termux, el
+mkdir(DIR_Z, 0o700) de create_fake_temporary_node_executable falla y la
+funcion devuelve Ok(()) SIN inyectar el shim: el silencio del fallo es lo
+que lo hizo invisible hasta esta bateria. El camino Termux/$PREFIX/tmp es
+el equivalente escribible y coincide con el fallback de node:os (0004).
+---
+ src/install/lib.rs | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/src/install/lib.rs b/src/install/lib.rs
+index 314523c..463d76f 100644
+--- a/src/install/lib.rs
++++ b/src/install/lib.rs
+@@ -417,7 +417,15 @@ impl RunCommand {
+         const TMP: &str = if cfg!(target_os = "macos") {
+             "/private/tmp"
+         } else if cfg!(target_os = "android") {
+-            "/data/local/tmp"
++            // Termux: /data/local/tmp belongs to the shell/adbd uid and is not
++            // writable from the app uid, so `mkdir(DIR_Z, 0o700)` below fails
++            // with EACCES and create_fake_temporary_node_executable returns
++            // Ok(()) WITHOUT injecting the shim: `bun run` scripts that call
++            // `node` then die with 127 ("/bin/sh: node: inaccessible or not
++            // found"). Measured on-device against the official android 1.3.14,
++            // which does inject the shim. The Termux prefix tmp is the
++            // writable equivalent (same target as the node:os tmpdir fix).
++            "/data/data/com.termux/files/usr/tmp"
+         } else {
+             "/tmp"
+         };
+-- 
+2.56.0
+
