@@ -26,9 +26,13 @@
 
    ```sh
    gh workflow run release-android.yml --repo Leonisaurov/bun-android \
-     -f run_id=<ID-del-run-android-exitoso> -f tag=v1.4.2-android.1
+     -f run_id=<ID-del-run-android-exitoso> -f tag=v1.4.2-android.1 \
+     -f evidence_ref="PROGRESS.md A1 · bateria T1-T8 · run <ID> · sha <SHA>"
    gh run watch <nuevo-run-id> --repo Leonisaurov/bun-android
    ```
+
+   `evidence_ref` es obligatorio (1..200 caracteres, una línea): la release no
+   se abre sin decir dónde está la medición en el teléfono.
 
 4. El job publica `Leonisaurov/bun-android` con cuatro assets:
    - `bun-linux-aarch64-android.tar.gz` — directorio
@@ -44,8 +48,13 @@
   viaja por variables de entorno).
 - El run fuente es `build-android`, `completed`/`success`, y de `main`.
 - El artifact contiene **exactamente un archivo** y ese archivo es
-  ELF64/AArch64/`UNIX Android` con `libc.so` en `DT_NEEDED` (mismas
-  validaciones estáticas que `ci/build-android.sh`).
+  ELF64 / AArch64 / `ET_DYN` con `libc.so` en `DT_NEEDED`.
+- **Nota sobre `OS/ABI`:** el linker del NDK para un target android emite
+  `OS/ABI: UNIX - System V` (no `UNIX Android`), verificado con `readelf -h`
+  sobre el artifact propio. El gate histórico exigía `UNIX Android` y por eso
+  **ningún dispatch de release podía pasar**. El indicador real de que esto es
+  bionic es el `DT_NEEDED libc.so` más la corrida en el teléfono, no el byte
+  `e_ident`/`os_abi`.
 - sha256 del binario y del tarball calculados y publicados como assets.
 
 El cuerpo de la release enlaza el run origen, su commit y el pin upstream, y

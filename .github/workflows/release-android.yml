@@ -17,6 +17,10 @@ run-name: "publicar ${{ inputs.tag }}"
         description: "Tag de la release, p. ej. v1.4.2-android.1"
         type: string
         required: true
+      evidence_ref:
+        description: "Referencia de la evidencia en dispositivo, p. ej. PROGRESS.md#A1 (run 37652505142, sha 899866c5)"
+        type: string
+        required: true
 
 permissions:
   contents: write
@@ -32,6 +36,7 @@ jobs:
     env:
       RUN_ID: ${{ inputs.run_id }}
       TAG: ${{ inputs.tag }}
+      EVIDENCE_REF: ${{ inputs.evidence_ref }}
     steps:
       - name: Validate inputs
         run: |
@@ -41,6 +46,11 @@ jobs:
           [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "run_id debe ser numerico" >&2; exit 1; }
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-android\.[0-9]+$ ]] || {
             echo "tag debe matchear ^vX.Y.Z-android.N$" >&2; exit 1; }
+          # Free text, but only ever used as a single markdown line through env.
+          [[ -n "$EVIDENCE_REF" && ${#EVIDENCE_REF} -le 200 ]] || {
+            echo "evidence_ref debe tener 1..200 caracteres" >&2; exit 1; }
+          [[ "$EVIDENCE_REF" != *$'\n'* ]] || {
+            echo "evidence_ref debe ser de una sola linea" >&2; exit 1; }
 
       - name: Validate source run
         env:
@@ -71,7 +81,12 @@ jobs:
           BIN=$(find "$WORK/art" -type f | head -n1)
           readelf -h "$BIN" | grep -Eq 'Class: +ELF64'
           readelf -h "$BIN" | grep -Eq 'Machine: +AArch64'
-          readelf -h "$BIN" | grep -Eq 'OS ABI: +UNIX Android'
+          readelf -h "$BIN" | grep -Eq 'Type: +DYN'
+          # The NDK linker emits `OS/ABI: UNIX - System V` for android targets
+          # (e_flags carries no Android marker here), so asserting `UNIX Android`
+          # could never match our own artifact. The real bionic gate is the
+          # DT_NEEDED libc.so below plus the on-device run (docs/VERIFY.md).
+          readelf -h "$BIN" | grep -Eq 'OS/ABI: +UNIX - (System V|GNU|Android)'
           readelf -d "$BIN" | grep -Eq 'libc\.so'
           sha256sum "$BIN" | tee "$WORK/bun-aarch64-android.sha256"
           cp "$BIN" "$WORK/bun-aarch64-android"
@@ -101,8 +116,9 @@ jobs:
             echo ""
             echo "- Build original: run [$RUN_ID](https://github.com/$GITHUB_REPOSITORY/actions/runs/$RUN_ID) (commit \`$head_sha\`; $pin)"
             echo "- Upstream pineado: oven-sh/bun \`bun-v1.4.2\` + parches \`patches/android/0001..0006\` (ver docs/PATCHES.md)"
-            echo "- Verificacion estatica en este job: ELF64/AArch64/Android + DT_NEEDED libc.so."
-            echo "- Verificacion en dispositivo: ver docs/VERIFY.md antes de dar paridad por buena."
+            echo "- Verificacion estatica en este job: ELF64/AArch64/ET_DYN + DT_NEEDED libc.so."
+            echo "- Evidencia en dispositivo: $EVIDENCE_REF"
+            echo "- Protocolo de verificacion: docs/VERIFY.md (un \"compila\" nunca cierra un hito)."
             echo ""
             echo "Instalar: descomprimir y usar \`bun-linux-aarch64-android/bun\` (en Termux, p. ej. \`~/.bun-android/bin\`)."
           } > "$WORK/body.md"
