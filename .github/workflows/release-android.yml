@@ -58,12 +58,19 @@ jobs:
         run: |
           set -euo pipefail
           repo="$GITHUB_REPOSITORY"
-          state=$(gh api "repos/$repo/actions/runs/$RUN_ID" --jq '[.name, .status, .conclusion] | join(" ")')
-          echo "run $RUN_ID: $state"
-          [ "$state" = "build-android completed success" ] || {
-            echo "el run indicado no es un build-android completado con exito" >&2; exit 1; }
-          # The run must have been triggered on this workflow's branch (main)
-          head_branch=$(gh api "repos/$repo/actions/runs/$RUN_ID" --jq .head_branch)
+          # `.name` en la API de runs es el RUN-NAME ("bun-android android"), no el
+          # nombre del workflow, asi que exigir "build-android completed success"
+          # nunca matchea nuestros propios runs. El vinculo estable es el id del
+          # archivo .github/workflows/build-android.yml.
+          ba_wfid=$(gh api "repos/$repo/actions/workflows" \
+            --jq '.workflows[] | select(.path == ".github/workflows/build-android.yml") | .id')
+          [ -n "$ba_wfid" ] || { echo "no existe build-android.yml en este repo" >&2; exit 1; }
+          IFS=' ' read -r status concl wfid head_branch < <(
+            gh api "repos/$repo/actions/runs/$RUN_ID" \
+              --jq '[.status, .conclusion, (.workflow_id|tostring), .head_branch] | join(" ")')
+          echo "run $RUN_ID: status=$status conclusion=$concl workflow_id=$wfid branch=$head_branch"
+          { [ "$status" = "completed" ] && [ "$concl" = "success" ] && [ "$wfid" = "$ba_wfid" ]; } || {
+            echo "el run indicado no es un build-android completado con exito (esperado workflow_id=$ba_wfid)" >&2; exit 1; }
           [ "$head_branch" = "main" ] || {
             echo "el run indicado no es de main ($head_branch)" >&2; exit 1; }
 
@@ -111,11 +118,19 @@ jobs:
           WORK="$RUNNER_TEMP/release"
           head_sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)
           pin=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha" --jq '.commit.message' | head -1)
+          # Rango de parches LEIDO DEL TREE DEL RUN publicable (no hardcodeado:
+          # "0001..0006" describio mal la release cuando ya existian 0007/0008).
+          patches=$(gh api "repos/$GITHUB_REPOSITORY/git/trees/$head_sha?recursive=1" \
+            --jq '[.tree[]? | select(.path | test("^patches/android/[0-9]{4}-.+\\.patch$")) | .path[16:20]] | sort | .[]')
+          n=$(echo "$patches" | wc -l | tr -d ' ')
+          first=$(echo "$patches" | head -1); last=$(echo "$patches" | tail -1)
+          [ -n "$first" ] || { echo "no encontre parches en patches/android/ del run" >&2; exit 1; }
           {
             echo " Bun $TAG para Android/Termux (aarch64, API 28), construido desde fuente."
             echo ""
             echo "- Build original: run [$RUN_ID](https://github.com/$GITHUB_REPOSITORY/actions/runs/$RUN_ID) (commit \`$head_sha\`; $pin)"
-            echo "- Upstream pineado: oven-sh/bun \`bun-v1.4.2\` + parches \`patches/android/0001..0006\` (ver docs/PATCHES.md)"
+            echo "- Upstream pineado: oven-sh/bun \`bun-v1.4.2\`"
+            echo "- Parches del port: \`patches/android/$first..$last\` ($n en total; ver docs/PATCHES.md)"
             echo "- Verificacion estatica en este job: ELF64/AArch64/ET_DYN + DT_NEEDED libc.so."
             echo "- Evidencia en dispositivo: $EVIDENCE_REF"
             echo "- Protocolo de verificacion: docs/VERIFY.md (un \"compila\" nunca cierra un hito)."
