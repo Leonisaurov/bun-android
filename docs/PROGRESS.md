@@ -205,7 +205,7 @@ en `$PREFIX/tmp/m4-probe/`, bajo `tcr`. Comandos y resultados:
   (`e_shoff=291296624`, 45×64 B ⇒ fin=EOF). El grafo va **dentro de la
   imagen**: descriptor en la sección `.bun` (0xfa B en `0x54c0000`: u64
   longitud + fuente `// @bun…`) y los módulos embebidos como datos estáticos
-  (en `probe2` la ruta `node_modules/ms` aparece como string en `0x54BF2B7`,
+  (en `probe2` la ruta `node_modules/ms` aparece como string en `0x54C04F7`,
   dentro del LOAD RW). Es decir, 1.4.2 no "pega un grafo al final": lo
   **enlaza** — un ensamblador estilo era-Zig (append + scan de magic al EOF)
   es estructuralmente insuficiente; el bridge M4 tiene que modelar la

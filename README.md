@@ -9,6 +9,11 @@ This is a **side project**. It is deliberately isolated from the
 `opencode-termux` workspace, whose Bun port (era-Zig: runtime 1.2.13 +
 standalone-graph emitter 1.3.2) is closed and must not be touched from here.
 
+**Donde empezar**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (mapa del
+repo) → [`docs/BUILD.md`](docs/BUILD.md) (receta/pins) →
+[`docs/PROGRESS.md`](docs/PROGRESS.md) (estado y evidencia) →
+[`docs/ROADMAP.md`](docs/ROADMAP.md) (lo pendiente).
+
 ## Model
 
 - The upstream source is **not** a locally initialized submodule: the phone
@@ -37,11 +42,15 @@ scripts/verify-*.sh     on-device checks (Termux side, never ~/.local/bin)
   build-android.yml     workflow_dispatch: host-smoke | android (no publish)
   release-android.yml   workflow_dispatch only: publishes a prior android run
 docs/
+  ARCHITECTURE.md       components map + data flow + invariants
   BUILD.md              build recipe, toolchain pins, CI/caches
   PATCHES.md            the six android patches and the TinyCC quadruple gate
   VERIFY.md             on-device protocol and evidence format
   RELEASE.md            publication policy and procedure
-  PROGRESS.md           milestone checklist + evidence log
+  STANDALONE.md         measured 1.4.2 `--compile` graph format (M4 bridge input)
+  KNOWN-ISSUES.md       measured limitations and diagnostic gotchas
+  ROADMAP.md            what's left and the open decisions
+  PROGRESS.md           milestone checklist + evidence log (canonical)
 ```
 
 ## Acceptance rule
