@@ -234,8 +234,14 @@ const cases = {
       "dns.promises.resolve A: " + JSON.stringify(addrs));
     const mx = await withTimeout(15000, () => dns.promises.resolveMx("google.com"));
     assert(mx.length > 0 && typeof mx[0].exchange === "string", "resolveMx: " + JSON.stringify(mx).slice(0, 80));
-    const txt = await withTimeout(15000, () => Bun.dns.resolve("_dmarc.github.com", { recordType: "TXT" }));
-    assert(JSON.stringify(txt).includes("DMARC"), "Bun.dns.resolve TXT: " + JSON.stringify(txt).slice(0, 80));
+    const txt = await withTimeout(15000, () => dns.promises.resolveTxt("_dmarc.github.com"));
+    assert(JSON.stringify(txt).includes("DMARC"), "dns.promises.resolveTxt: " + JSON.stringify(txt).slice(0, 80));
+    // `Bun.dns.resolve` acepta el tipo de registro como SEGUNDO argumento string;
+    // con objeto (`{recordType:"TXT"}`) el campo se ignora y queda queryA (medido
+    // 2026-10-08, sonda upstream `recordtype_obj_ignored`). Se fija la forma que
+    // funciona sin afirmar que la otra esté bien.
+    const bunTxt = await withTimeout(15000, () => Bun.dns.resolve("_dmarc.github.com", "TXT"));
+    assert(JSON.stringify(bunTxt).includes("DMARC"), "Bun.dns.resolve TXT posicional: " + JSON.stringify(bunTxt).slice(0, 80));
   },
 
   node_crypto_deep: () => {

@@ -441,5 +441,23 @@ await W("cc_pragma_once_tasa_de_crash_20", async () => {
   throw new Error(`crashes=${crashes}/20 (otros=${other})`);
 });
 
+// 22) `Bun.dns.resolve(hostname, {recordType})`: en el ELF android el campo del
+// objeto se ignora y el query sale A (para `_dmarc.github.com`, `queryA
+// ENOTFOUND`), mientras la forma posicional string sí elige el tipo. El shape
+// del wrapper JS es plataforma-independiente, así que se mide si reproduce
+// igual en linux-x64 oficial (upstream) o solo acá (port).
+await W("recordtype_obj_ignored", async () => {
+  if (isNode) throw new Error("solo-bun (Bun.dns)");
+  const obj = await wt(8000, Bun.dns.resolve("_dmarc.github.com", { recordType: "TXT" }))
+    .then((r) => "OBJ-OK " + JSON.stringify(r).slice(0, 60))
+    .catch((e) => "OBJ-ERR " + String((e && e.message) || e).slice(0, 60));
+  const pos = await wt(8000, Bun.dns.resolve("_dmarc.github.com", "TXT"))
+    .then((r) => "POS-OK " + JSON.stringify(r).slice(0, 60))
+    .catch((e) => "POS-ERR " + String((e && e.message) || e).slice(0, 60));
+  if (obj.startsWith("OBJ-OK")) return `objeto respetado :: ${obj} | ${pos}`;
+  if (!pos.startsWith("POS-OK")) throw new Error(`ambas rojas :: ${obj} | ${pos}`);
+  throw new Error(`recordType del objeto ignorado (queda queryA), posicional OK :: ${obj} | ${pos}`);
+});
+
 console.log(`runtime: ${isNode ? "node " + process.version : "bun " + Bun.version}`);
 console.log(R.join("\n"));
