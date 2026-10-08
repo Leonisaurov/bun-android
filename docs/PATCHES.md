@@ -55,9 +55,7 @@ del predicado que genera el `pub const ENABLE_TINYCC`. Es el guard que lee
 `/data/local/tmp`, no escribible por el uid de Termux ⇒ `mkdtemp` EACCES
 (rojo medido). Fallback a `/data/data/com.termux/files/usr/tmp` (análogo del
 fix `platformTempDir` zig-era). Verde: run `37646043259`,
-`scripts/verify-tmpdir-device.sh`. No parcheado a propósito: el const
-`BUN_NODE_DIR` de `src/install/lib.rs` (shim `node` de `bun run`) sigue en
-`/data/local/tmp` — periférico, fuera del alcance de los smokes.
+`scripts/verify-tmpdir-device.sh`.
 
 ### 0005 · externs reales de libtcc
 
@@ -75,6 +73,23 @@ android, alineándose con los defaults zig-era (`ffi.zig:1501` ya pasaba
 **Limitación portada** (idéntica a la era Zig): sin stdlib, código C que
 referencie símbolos libc requiere resolución adicional del usuario; fuera del
 smoke de paridad.
+
+## 0007 · shim `node` de `bun run` en el tmp de Termux
+
+`src/install/lib.rs`: el const `BUN_NODE_DIR` elegía `/data/local/tmp` para
+android. Ese directorio no es escribible por el uid de Termux, el
+`mkdir(DIR_Z, 0o700)` de `create_fake_temporary_node_executable` falla y la
+función **devuelve `Ok(())` sin inyectar nada**: `bun run` de un script que
+llame a `node` muere `rc=127` (`/bin/sh: node: inaccessible or not found`).
+El fallo silencioso es la razón por la que este gap sobrevivió a todos los
+smokes anteriores — solo aparece con `node` ausente del PATH.
+
+Medido con la batería A1 contra el android oficial 1.3.14 (que sí inyecta el
+shim, en `$TMPDIR/bun-node-fab5250e0`): rojo `899866c5` → verde `31392bde`
+(run `37727225410`), caso `T5/run_script_node_shim`. El camino elegido es el
+mismo que 0004 (`/data/data/com.termux/files/usr/tmp`), y es un `const` de
+compile-time: si alguien mueve el prefijo, el shim vuelve a no inyectarse
+(sin crash), igual que antes del parche.
 
 ## Cómo agregar un parche nuevo
 

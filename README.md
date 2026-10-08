@@ -1,9 +1,9 @@
 # bun-android — side project
 
 Port of **Bun v1.4.2** (Rust rewrite; zero `.zig` files) to Android/Bionic,
-built from source in our own GitHub Actions. Milestones M0–M4 with
-on-device evidence live in [`docs/PROGRESS.md`](docs/PROGRESS.md); all upstream
-pins live in [`ci/source-manifest.json`](ci/source-manifest.json).
+built from source in our own GitHub Actions. Milestones M0–M4 plus the broad
+on-device audit (A1) live in [`docs/PROGRESS.md`](docs/PROGRESS.md); all
+upstream pins live in [`ci/source-manifest.json`](ci/source-manifest.json).
 
 This is a **side project**. It is deliberately isolated from the
 `opencode-termux` workspace, whose Bun port (era-Zig: runtime 1.2.13 +
@@ -37,15 +37,18 @@ repo) → [`docs/BUILD.md`](docs/BUILD.md) (receta/pins) →
 ci/                     source-manifest.json, setup-runner.sh, validate-source-tree.sh,
                         link-ndk-runtimes.sh, build-android.sh
 patches/android/        versioned Bionic/Termux patches (see docs/PATCHES.md)
-scripts/verify-*.sh     on-device checks (Termux side, never ~/.local/bin)
+scripts/verify-*.sh     targeted on-device regressions (one per patch)
+scripts/battery-device.sh
+                        broad on-device battery: 97 cases over 8 tiers (T1–T8)
+tests/fixtures/         battery cases + manifest (cases.txt) + shared helpers
 .github/workflows/
   build-android.yml     workflow_dispatch: host-smoke | android (no publish)
   release-android.yml   workflow_dispatch only: publishes a prior android run
 docs/
   ARCHITECTURE.md       components map + data flow + invariants
   BUILD.md              build recipe, toolchain pins, CI/caches
-  PATCHES.md            the six android patches and the TinyCC quadruple gate
-  VERIFY.md             on-device protocol and evidence format
+  PATCHES.md            the seven android patches and the TinyCC quadruple gate
+  VERIFY.md             on-device protocol, the T1–T8 battery, evidence format
   RELEASE.md            publication policy and procedure
   STANDALONE.md         measured 1.4.2 `--compile` graph format (M4 bridge input)
   KNOWN-ISSUES.md       measured limitations and diagnostic gotchas

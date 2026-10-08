@@ -11,16 +11,19 @@ está en [`PROGRESS.md`](PROGRESS.md).
 bash scripts/verify-device.sh <path-al-ELF-del-artifact> 1.4.2
 ```
 
-Instala **solo** en `~/.bun-android/bin/bun` — jamás `~/.local/bin`, que
-pertenece al port era-Zig cerrado de `opencode-termux`. Valida `rc=0` y
-versión exacta, e imprime el sha256 instalado (ese sha es el que se cita en
-la evidencia).
+Instala en `~/.bun-android/bin/bun` y valida `rc=0` + versión exacta; imprime
+el sha256 instalado (ese sha es el que se cita en la evidencia). La copia de
+uso diario en `~/.local/bin/bun` **no** la escribe el script: se coloca a mano
+(`cp` y re-verificar el mismo sha256) por instrucción explícita del usuario del
+2026-10-07 — el port era-Zig de `opencode-termux` está cerrado y el oráculo
+`bun 1.3.14` queda intacto en `$PREFIX/bin/bun`. En la batería y los
+verificadores manda siempre la ruta explícita, nunca el PATH.
 
 El ELF llega del run `android` de
 [`build-android.yml`](../.github/workflows/build-android.yml): artifact
 `bun-aarch64-android` (`gh run download <run> -n bun-aarch64-android`).
 
-## Batería de smokes
+## Verificadores dirigidos (smokes)
 
 Con el binario instalado en `~/.bun-android/bin`, correr en orden:
 
@@ -46,6 +49,65 @@ mkdir -p "$PREFIX/tmp/i" && cd "$PREFIX/tmp/i" && $BUN add ms && $BUN -e 'consol
 objetivo completo de paridad son los smokes medidos, no una declaración de
 "paridad total" (bundler, installs grandes o FFI más allá del smoke quedan
 fuera de lo afirmado).
+
+## Batería amplia T1–T8
+
+Los cuatro verificadores de arriba son **dirigidos**: cada uno cubre un
+parche. La batería mide la superficie en bulk (97 casos, 8 tiers) y fue la
+herramienta de la auditoría A1 (`PROGRESS.md`).
+
+```sh
+# en tmux, sin bloquear la sesión; capturar el pane
+sh -c './scripts/battery-device.sh --json "$PREFIX/tmp/battery-logs/run.json" \
+       > "$PREFIX/tmp/battery-logs/run.log" 2>&1'
+```
+
+Flags (`--list` imprime el manifiesto sin ejecutar):
+
+| Flag | Efecto |
+|---|---|
+| `--bun PATH` | binario a testear; por defecto `~/.bun-android/bin/bun` (ruta explícita, nunca PATH) |
+| `--tiers T1,T4` | subconjunto de oleadas; sin flag, T1→T8 |
+| `--case ID` | un solo caso (debug de fixture) |
+| `--json OUT` | `summary.json` con `{bun_sha, bun_revision, tier, case, rc, dur, verdict}` por caso |
+| `--min-free-mb N` | gate de disco: aborta **antes** de crear scratch si hay menos espacio |
+| `--keep` | no borra el scratch (`$PREFIX/tmp/battery-<sha8>-<pid>`, que tiene `trap` de limpieza) |
+
+Tiers: T1 CLI/exit codes/señales · T2 compat `node:*` (fs, os, worker_threads,
+child_process, http, dns) · T3 http y red reales sobre TCP · T4 storage
+(`bun:sqlite` archivo+WAL, `Bun.file`, Blob/FormData, `Bun.hash`) · T5
+instalador y `bun build`/`bunx` · T6 FFI/TinyCC · T7 `--compile` · T8 edges
+Termux (seccomp por syscall, RLIMIT, paths UTF-8/espacios, case-sensitivity,
+heap, fd leaks). Manifiesto: [`tests/fixtures/cases.txt`](../tests/fixtures/cases.txt)
+(`TIER|archivo|nombre|timeout_ms|expect`); cada caso es un `.mjs` que exita
+0/1 y se autolimpia, con helpers en [`tests/fixtures/lib.mjs`](../tests/fixtures/lib.mjs).
+
+Reglas de honestidad del runner (todas nacieron de un falso negativo o falso
+positivo vivido):
+
+- **Un proceso `bun` aislado por caso**, cwd = scratch del caso, con
+  `timeout -k`. El `rc` se lee del proceso de bun **directamente**, nunca de
+  un pipe: `${PIPESTATUS[0]}` no existe bajo el wrapper `sh -c` de Termux y
+  medir el rc de `tail` dio una corrida "toda verde" que no era real.
+- Veredictos: `PASS | FAIL | TIMEOUT | SKIP | KNOWN | KNOWN-PASS`. `SKIP` es
+  la primera línea `#SKIP` del fixture (prerequisito ausente), no un rc.
+  `expect=KNOWN` = limitación portada y medida en `KNOWN-ISSUES.md`.
+- **UNEXPECTED** es un rojo al revés: un `KNOWN` que pasó. Cuenta como noticia
+  y el runner sale 1, igual que con un `FAIL`. Salida: `exit 1` si hay
+  cualquier FAIL o UNEXPECTED; `battery_rc=0` en la logfile es el sello del
+  cierre.
+- Ejecutables compilados (`--compile`, bins de `node_modules/.bin`) se corren
+  con el helper `runBin`, no con `self([...])`: pasar un ELF por el runner de
+  JS da `Unexpected \x7f` y se lee como rojo del binario.
+- Un caso que depende de un shim PATH debe correr con un PATH **privado y
+  vacío**; con `$PREFIX/bin` dentro, el `node` real de Termux enmascara el gap
+  y el caso sale verde mintiendo.
+
+**Qué no promete la batería**: no es la suite de tests de upstream (esa exige
+`RLIMIT`/fixtures propios y queda fuera); no mide rendimiento; no cubre NAPI
+nativo ni la plugin API del bundler más allá de `bun build` simple; no prueba
+installs grandes ni registry proxies; y no toca el puente M4 standalone (los
+casos T7 se autolimitan por disco y borran su ELF de ~291 MB en el mismo paso).
 
 ## Cómo medir antes de parchear
 

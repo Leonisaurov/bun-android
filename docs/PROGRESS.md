@@ -145,7 +145,8 @@ sha256 `5245f48f…`, 2026-10-07):
   `verify-sigsys-device.sh` sigue verde (sin regresión de 0001). Nota: el shim
   `BUN_NODE_DIR` de `bun run` queda en `/data/local/tmp` en builds android
   (solo afecta si un script invoca `node` sin node en PATH; fuera del alcance
-  de los smokes).
+  de los smokes). **Portado en A1**: ese "fuera del alcance" resultó rojo real
+  y lo cierra el parche `0007` (ver hito A1 abajo).
 - [ ] TinyCC: gate cuádruple descubierto — (a) `config.ts`/`deps/tinycc.ts`
   (patch `0002`, habilita el build DirectBuild: fetch + codegen `tccdefs_.h` +
   10 objetos linkeados; la "anomalía" de edges ausentes era truncado del log
@@ -220,6 +221,121 @@ en `$PREFIX/tmp/m4-probe/`, bajo `tcr`. Comandos y resultados:
 deps). El puente M4 sigue siendo proyecto aparte, ahora con formato objetivo
 medido: parser de grafo 1.4.x = lectura de sección `.bun` + blobs en
 `PT_LOAD`, no trailer EOF.
+
+## A1 · auditoría amplia de superficie (T1–T8) — CERRADO 2026-10-07
+
+Hito disparado por la sospecha del usuario: M3 se cerró con **cuatro smokes
+dirigidos** (uno por parche) y una sonda `--compile`, o sea que la superficie
+afirmada nunca se midió en bulk. A1 mide la superficie real del ELF en
+Termux, diagnostica cada rojo con causa, parchea solo lo nuestro y re-mide
+completo por regresiones. Protocolo y flags del runner en
+[`VERIFY.md` · Batería amplia](VERIFY.md); política de rojos aceptados en
+[`KNOWN-ISSUES.md`](KNOWN-ISSUES.md).
+
+Artefactos del hito: `scripts/battery-device.sh` + `tests/fixtures/`
+(97 casos en 8 tiers, manifiesto `cases.txt`, helpers `lib.mjs`), gate real
+del workflow de release, y el parche `0007`.
+
+### Fix del gate de release (no requería teléfono para demostrar)
+
+`release-android.yml` exigía `grep -Eq 'OS ABI: +UNIX Android'`, pero `readelf`
+imprime `OS/ABI:` (con barra) y el toolchain upstream marca el ELF android como
+`UNIX - System V` — ya documentado en M1. El gate era **irremplazablemente
+falso**: ningún dispatch de release podía pasar. Reemplazado por las validaciones
+que la herramienta produce de verdad (`OS/ABI: +UNIX - (System V|GNU|Android)`,
+`Type: DYN`, `DT_NEEDED libc.so`) y se añadió `evidence_ref` obligatorio al body
+de la release (commit `86887bb`; no se despachó ninguna release).
+
+### Falso verde de metodología, corregido antes de afirmar nada
+
+La sonda rápida inicial (14 casos: `node:crypto`, `zlib`, `Buffer`, streams,
+`Worker`, `sqlite` WAL, `execFileSync`, `Intl es-AR`) se midió con pipes a
+`tail`, así que los `rc` leídos eran los de `tail`. `${PIPESTATUS[0]}` no existe
+bajo el wrapper `sh -c` de Termux. El runner corre el binario **sin pipe** y lee
+el rc del proceso de bun. Ningún número de abajo viene de esa sonda.
+
+### Línea base — binario `899866c5…` (run `37652505142`), sin rebuild
+
+sha256 `899866c5ed7f7a74893e0ad7251e875f83001938871313aa4502a84413910588`,
+`bun --revision` ⇒ `1.4.2-canary.1+c23b9c226`, 3.897 MB libres al inicio.
+Corridas por oleada (logs en `$PREFIX/tmp/battery-logs/`):
+
+| Oleada | Log | resultado | Nota |
+|---|---|---|---|
+| T3+T4 | `t34-220653.log` | 28/28 PASS | — |
+| T5+T6 (1ª) | `t56.log` | 9 PASS, 4 FAIL, 1 KNOWN, 1 SKIP, 1 KNOWN-PASS | los 4 FAIL eran **bugs de mis fixtures** (`ms(90000)` es `"2m"`; `eq()` sobre arrays compara referencias; `new Request(response)` pide url; un ELF pasado por `self()` → `Unexpected \x7f`), no del binario |
+| T5 fix + T7 | `t57.log` | 12 PASS, 1 FAIL | el FAIL es `run_script_node_shim`: rojo **real** |
+| T8 | `t8.log` | 14 PASS, 1 FAIL | `spawn_flood_50`: fixture (leía un Promise de stdout), no binario |
+| T1+T2+T5+T8 consolidado | `base-t1258.log` | 56 PASS, 1 FAIL, 2 KNOWN | único FAIL el del shim |
+
+Matriz base consolidada (97 casos):
+
+| Tier | casos | PASS | FAIL | KNOWN | SKIP |
+|---|---|---|---|---|---|
+| T1 CLI | 16 | 16 | — | — | — |
+| T2 node compat | 18 | 17 | — | 1 (`dns_promises_resolve` cuelga) | — |
+| T3 http/red | 16 | 16 | — | — | — |
+| T4 storage | 12 | 12 | — | — | — |
+| T5 install/build | 10 | 8 | **1** (`run_script_node_shim`) | 1 (`install_removes_pruned_dep`) | — |
+| T6 FFI/TinyCC | 6 | 4 | — | 1 (`cc_libc_reference_limitation`) | 1 (attempt JSCallback) |
+| T7 `--compile` | 4 | 4 | — | — | — |
+| T8 edges Termux | 15 | 15 | — | — | — |
+| **total** | **97** | **92** | **1** | **3** | **1** |
+
+### Triage del rojo único
+
+Árbol de decisión: no es limitación de entorno compartida con el oráculo —
+`/data/local/tmp` no es escribible por el uid de Termux,
+`create_fake_temporary_node_executable` hace `mkdir(..., 0o700)` y ante el error
+**devuelve `Ok(())` sin inyectar el shim** (`src/install/lib.rs:588-603`), así
+que `bun run <script>` que invoca `node` muere 127 en silencio. Es nuestra
+cancha (mismo target que el fix `0004` de tmpdir, y `BUN_NODE_DIR` era el gap
+que M3 había dejado a propósito como candidato 0007) → **parche**, no doc.
+Fixture reforzado: corre con un PATH **privado y vacío**, porque con
+`$PREFIX/bin` dentro pasaba usando el `node` real de Termux (falso verde).
+
+### Loop de fix y re-test completo (regresiones)
+
+`patches/android/0007-android-node-shim-dir-termux.patch` (una hunk en
+`src/install/lib.rs`, generado desde un árbol mínimo en `$PREFIX/tmp` con
+baseline upstream **antes** de editar, regla de `PATCHES.md`). Commit `39338cc`
+→ push → `build-android.yml` mode=`android` run **`37727225410`** (success) →
+artifact `bun-aarch64-android` 289.368.016 B, sha256
+`31392bdeb78b99591da54a4d468037b5661e8e27bd109f60982e8b368de37e70`,
+`bun --revision` ⇒ `1.4.2-canary.1+39338cc1c`. Instalado en
+`~/.bun-android/bin/bun` y `~/.local/bin/bun` con sha idéntico al de CI; el
+oráculo `$PREFIX/bin/bun` (1.3.14) intacto. 3.211 MB libres durante la
+re-medición.
+
+Con el binario nuevo, en la misma logfile: `verify-sigsys` `rc=0`,
+`verify-tmpdir` `rc=0`, `verify-tinycc` `rc=0`, y batería completa T1→T8
+(`post0007.log`, `post0007.json`):
+
+| Tier | casos | PASS | FAIL | KNOWN | SKIP | vs base |
+|---|---|---|---|---|---|---|
+| T1 | 16 | 16 | — | — | — | igual |
+| T2 | 18 | 17 | — | 1 | — | igual |
+| T3 | 16 | 16 | — | — | — | igual |
+| T4 | 12 | 12 | — | — | — | igual |
+| T5 | 10 | 9 | — | 1 | — | **shim verde**, sin regresión |
+| T6 | 6 | 4 | — | 1 | 1 | igual |
+| T7 | 4 | 4 | — | — | — | igual |
+| T8 | 15 | 15 | — | — | — | igual |
+| **total** | **97** | **93** | **0** | **3** | **1** | `battery_rc=0`, **0 rojos nuevos** |
+
+### Criterio nuevo que salió de la auditoría
+
+Un "repro" de terceros se **vuelve a medir acá** antes de parchear: dos
+subagentes reportaron un SIGSEGV reproducible en `bun x`, un techo de
+`RLIMIT_NOFILE` de 176 y una corrección de fd "aplicada" al harness — nada de
+eso estaba en el árbol (el `grep` de `lib.mjs` lo negó) y la sonda propia dio
+8/8 `rc=0`. Receta portada a `KNOWN-ISSUES.md`.
+
+**Estado del port tras A1**: 7 parches versionados, 93/97 casos verdes en
+dispositivo, 3 limitaciones aceptadas con evidencia y 1 SKIP voluntario. Sigue
+fuera de lo afirmado: suite upstream, bundler/plugin API, NAPI nativo,
+rendimiento y el puente M4. El dispatch de `release-android.yml` **no** se
+ejecutó (requiere autorización explícita del usuario).
 
 ## Bitácora
 

@@ -23,11 +23,12 @@ layout del README; este documento solo explica cómo encadenan.
 ```
 manifest (pins)
   └─> CI baja tarball + verifica sha256
-        └─> validate-source-tree: árbol limpio + git am 0001..0006
+        └─> validate-source-tree: árbol limpio + git am 0001..0007
               └─> build-android.sh: configure→ninja→cargo→link clang++
                     └─> readelf/sha del ELF → artifact bun-aarch64-android
                           ├─> dispositivo: verify-device.sh → ~/.bun-android/bin
-                          │     └─> batería sigsys/tmpdir/tinycc + smokes M2
+                          │     ├─> verificadores dirigidos (sigsys/tmpdir/tinycc + M2)
+                          │     └─> batería amplia T1–T8 (battery-device.sh)
                           │           └─> evidencia fechada → PROGRESS.md
                           └─> release-android.yml (solo dispatch, autorizable)
                                 └─> GitHub Release (tarball + ELF + sha256.txt)
