@@ -53,10 +53,13 @@ ya no: tiene su oleada T6).
 ## Batería amplia T1–T10
 
 Los cuatro verificadores de arriba son **dirigidos**: cada uno cubre un
-parche. La batería mide la superficie en bulk (155 casos, 10 tiers) y fue la
+parche. La batería mide la superficie en bulk (157 casos, 10 tiers) y fue la
 herramienta de las auditorías A1 (T1–T8), A2 (extensión + T9), A3 (T10,
-superficie de producto y del runner) y A4 (causa raíz del crash de libtcc +
-receta verde) de `PROGRESS.md`.
+superficie de producto y del runner), A4 (causa raíz del crash de libtcc +
+receta verde) y A5 (parche 0008 de DNS + segunda receta de headers) de
+`PROGRESS.md`. Sello vigente: `a8-full` — 157 casos, `PASS=148 FAIL=0
+TIMEOUT=0 SKIP=0 KNOWN=9 UNEXPECTED=0` sobre el sha `3c61913c…`
+(revisión `1.4.2-canary.1+0c087fdb9`).
 
 ```sh
 # en tmux, sin bloquear la sesión; capturar el pane. El `echo rc=$?` va DENTRO

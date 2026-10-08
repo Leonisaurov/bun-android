@@ -91,6 +91,43 @@ mismo que 0004 (`/data/data/com.termux/files/usr/tmp`), y es un `const` de
 compile-time: si alguien mueve el prefijo, el shim vuelve a no inyectarse
 (sin crash), igual que antes del parche.
 
+## 0008 · nameservers de Termux sembrados en el canal c-ares
+
+`src/cares_sys/c_ares.rs`: `Channel::init` llamaba `ares_init_options` y dejaba
+el default de c-ares. En Android ese default es `127.0.0.1` porque c-ares no
+tiene cómo descubrir los resolvers (no hay `/etc/resolv.conf` en la ruta FHS ni
+JNI para `ares_library_init_android`), y upstream lo deja a propósito con el
+comentario explícito de que así `dns.setServers()` "funciona como workaround
+documentado". El dnsproxyd de Android no responde desde el uid de Termux, así
+que **toda** la ruta cruda moría en `ETIMEOUT` a ~21 s mientras `dns.lookup()`
+(getaddrinfo → netd) funcionaba.
+
+El gap real: Termux **sí** publica un resolv.conf utilizable en
+`$PREFIX/etc/resolv.conf` (38 B, `8.8.8.8` + `8.8.4.4`; medido respondiendo por
+UDP:53 en 26–42 ms). Nada lo leía: upstream no mira `RESOLV_CONF` ni
+`CARES_RESOLV_CONF` en este camino, y `getprop net.dns*` sale vacío bajo Termux.
+
+El parche agrega, solo `#[cfg(target_os = "android")]`, un lector del archivo
+(`RESOLV_CONF` manda si está definido, como override propio del port) que toma
+hasta 3 líneas `nameserver`,
+elige la familia por la presencia de `:`, quita el `%scope`, arma los
+`struct_ares_addr_port_node` con `ares_inet_pton` y puertos 53, los enlaza y
+llama `ares_set_servers_ports(channel, …)` justo después de `set_channel`
+(c-ares copia la lista internamente). Sin archivo legible o sin líneas
+`nameserver`, devuelve `None` y el comportamiento queda idéntico a upstream.
+
+Rojo antes (sobre `31392bde` / revisión `39338cc1c`): `T2/node_dns_raw_resolve`
+144 ms, `T10/dns_getservers_siembra_el_resolv_conf_de_termux` 88 ms,
+`T10/dns_ruta_sistema_y_cruda_ambas_vivas` 20120 ms. Verde después (run
+`37843749634`, sha `3c61913c…`, revisión `1.4.2-canary.1+0c087fdb9`): los tres
+PASAN (T2 en 194 ms, los dos T10 entre 87 y 140 ms), `Bun.dns.getServers()`
+devuelve `["8.8.8.8","8.8.4.4"]` y `dns.promises.resolve()` resuelve A en
+20–45 ms.
+
+Misma advertencia que 0007: la ruta es un `const` de compile-time. Si alguien
+mueve el prefijo de Termux, el sembrado no ocurre y se cae al default upstream
+(sin crash, sin ruido).
+
 ## Cómo agregar un parche nuevo
 
 1. Árbol mínimo en `$PREFIX/tmp/<scratch>`: bajar el archivo alterado crudo

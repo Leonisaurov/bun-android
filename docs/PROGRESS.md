@@ -674,6 +674,127 @@ Ningún rojo nuevo, ningún verde perdido, y el último KNOWN sin causa deja de
 estar "abierto": tiene disparador mínimo, tasa contra oficiales y receta
 funcional. **Sin parche 0008, 0009 ni 0010.** El port sigue afirmado por
 evidencia en 155 casos; `release-android.yml` no se dispatcheó.
+(A4 quedó **superado por A5**: 0008 existe, la batería pasó a 157 casos y la
+afirmación "sin parche 0008" dejó de ser cierta.)
+
+## A5 · 0008 (resolv.conf de Termux en c-ares) y segunda receta verde de T6 — CERRADO 2026-10-08
+
+A4 cerró afirmando "sin parche 0008". Dos KNOWN que venían documentados como
+*entorno* (`T2/node_dns_raw_resolve` y el `dns` de T10) sobrevivieron porque
+nadie midió si el entorno tenía los datos. El usuario lo cuestionó
+(«¿el `/etc/resolv.conf` no puede usar el de termux?… ¿lo de T6 no tiene una
+solución?») y las dos sospechas eran ciertas.
+
+### DNS: la causa no era la ausencia de resolv.conf, era un default de upstream
+
+Medido en el teléfono, sobre el ELF sellado de A4:
+
+- Termux **sí** publica `$PREFIX/etc/resolv.conf` (38 B, `nameserver 8.8.8.8` +
+  `nameserver 8.8.4.4`) y esos servidores **responden UDP:53** desde el uid de
+  Termux (26–42 ms con `node:dgram`; el dnsproxyd de Android en `127.0.0.1:53`
+  nunca responde, medido).
+- `Bun.dns.getServers()` devolvía `["127.0.0.1"]`. No es que Android no exponga
+  los resolvers a c-ares: **upstream elige el fallback** — `src/dns/lib.rs:278-289`
+  pone `Backend::default()` y `Channel::init` (`src/cares_sys/c_ares.rs:722`)
+  deja el default con el comentario explícito (740-745) de que así
+  `dns.setServers()` "funciona como workaround documentado". `RESOLV_CONF` /
+  `CARES_RESOLV_CONF` no los mira este camino; `getprop net.dns*` sale vacío.
+
+Con eso el gap pasó de *entorno* a *parcheable por el port* ⇒ **parche 0008**
+([`patches/android/0008-android-dns-resolv-conf-termux.patch`](../patches/android/0008-android-dns-resolv-conf-termux.patch),
+detalle y rojo/verde en [PATCHES.md](PATCHES.md)).
+Efecto directo: `T2/node_dns_raw_resolve` KNOWN→PASS y los dos casos T10 que
+afirman el sembrado y la ruta cruda, que estaban escritos para el loopback,
+reescritos para el archivo real.
+
+### T6: segunda receta verde, sin tocar tinycc
+
+El crash de libtcc queda documentado en A4 (bug latente de la libtcc vendored).
+La receta de A4 era un shadow-dir con `-I`; se midió además una **receta de
+usuario** que no depende de ese disparador: preprocesar con `clang -E` y darle a
+`tcc` el plano, sin cadena de `#include`. Filtros necesarios, medidos uno por uno
+contra el error real: directivas de línea, `_Nullable`/`_Nonnull`,
+`__extension__`, las líneas con `__int128` y `__overloadable__`, más
+`#define ioctl __tcc_no_ioctl`.
+
+Dos correcciones salieron de objetar la receta en seco:
+
+- **`__int128` no desaparece**: el filtro borra exactamente dos líneas
+  (`typedef __signed__ __int128 __s128 …` y su gemela unsigned). El caso redeclara
+  `__s128`/`__u128` con el placeholder **propio de tinycc**
+  (`include/tccdefs.h:182-186`: `struct { char x[16]; } __aligned__(16)`), así que
+  `sizeof`/`__alignof__` quedan 16/16 y el fixture lo fija con `SIZE=1616`. El
+  campo `__uint128_t vregs[32]` de bionic no se toca. La aritmética de 128 bits sí
+  falla, pero como error duro de compilación (nunca silenciosa) y tinycc no tiene
+  ese keyword de todos modos. Guardas: el `.i` debe tener **exactamente 2**
+  líneas con `__int128` y ambas tienen que ser esos typedefs — si una cabecera
+  empieza a usar el tipo en otro lado, el caso grita.
+- **los flags van al hijo**: el runner generado no pasaba `flags` a `cc()`, y sin
+  `-L/apex/… -lc` tcc compila el plano pero deja `__errno`/`time`/`open`/`close`/
+  `stat` sin resolver (5 errores). Con `flags: process.argv[3]` la cadena
+  `errno + unistd + stdlib + string + time + fcntl + sys/stat` compila y corre
+  (`RET=7`, con `errno == EAGAIN` funcional).
+
+Caso nuevo: `T6/cc_headers_bionic_via_clang_preprocesado` (PASS).
+
+### Sellos `a7-full` y `a8-full` (ELF nuevo con 0008)
+
+`gh run` `37843749634` (commit `0c087fd`) → sha256
+`3c61913c9420c578536225e4f11a85ecf9619a26f6c0094d06b06bff30de31f9`, `--revision`
+`1.4.2-canary.1+0c087fdb9`, instalado con `scripts/verify-device.sh` (guardas
+`-ef` + `--version` previos a instalar, ver incidente A4). Sobre ese ELF corrieron
+dos sellos: **`a7-full`** (156 casos, `PASS=148 FAIL=0 KNOWN=8`) y el vigente
+**`a8-full`** (157, tras añadir el KNOWN del quirk `recordType`):
+
+| Tier | casos | PASS | FAIL | KNOWN | vs A4 |
+|---|---|---|---|---|---|
+| T1 CLI | 18 | 18 | — | — | igual |
+| T2 node compat | 27 | 27 | — | — | **KNOWN→PASS** |
+| T3 http/TLS | 19 | 19 | — | — | igual |
+| T4 storage | 14 | 14 | — | — | igual |
+| T5 install/build | 13 | 12 | — | 1 | igual |
+| T6 FFI/TinyCC | 11 | 10 | — | 1 | **+1 receta verde** |
+| T7 `--compile` | 4 | 4 | — | — | igual |
+| T8 edges Termux | 17 | 17 | — | — | igual |
+| T9 APIs producto | 5 | 3 | — | 2 | igual |
+| T10 producto + runner | 29 | 24 | — | 5 | 2 dns reescritos PASS + **1 KNOWN nuevo** |
+| **total** | **157** | **148** | **0** | **9** | **0 FAIL, 0 TIMEOUT, 0 SKIP, 0 UNEXPECTED** |
+
+`PASS=148 FAIL=0 TIMEOUT=0 SKIP=0 KNOWN=9 UNEXPECTED=0`, `BATTERY_DONE rc=0`,
+logs `a7-full`/`a8-full` (`.log`+`.json`). Diff caso por caso contra `a6-full`:
+**cero** verdictos perdidos; los únicos movimientos son
+`node_dns_raw_resolve` KNOWN→PASS, el caso T6 nuevo, dos renombrados en T10
+(ambos PASS) y `dns_resolve_obj_recordtype_elige_el_tipo` (KNOWN, arriba).
+
+### El KNOWN que abrió A5 y cómo se atribuyó
+
+`Bun.dns.resolve(hostname, {recordType:"TXT"})` ignora el campo y hace `queryA`
+(`queryA ENOTFOUND _dmarc.github.com`), mientras `Bun.dns.resolve(host, "TXT")`
+posicional sí devuelve el registro. La sonda `recordtype_obj_ignored` (añadida a
+`tests/parity-probe/cases.mjs`) lo corrió contra los **oficiales**
+`bun-linux-x64` (sha `a83d2637…`) y `bun-linux-aarch64` (sha `616f267a…`), ambos
+`1.4.2+744846f84`, run `37845989483`: **idéntico** (`dns_raw_resolve|OK` arriba,
+porque sí tienen `/etc/resolv.conf`). Es de producto ⇒ se documenta, no se
+parchea. Fijado como caso KNOWN para que el rojo tenga dueño.
+
+### Los 9 KNOWN restantes
+
+Ninguno es del port: `T5/install_removes_pruned_dep`,
+`T9/eventsource_global_available`, `T9/worker_bare_onmessage_global`, los
+cuatro stubs de T10 (`Archive`/`Image`/`CSRF`/`indexOfLine`) y
+`T10/dns_resolve_obj_recordtype_elige_el_tipo` están medidos contra
+el `bun-linux-x64` 1.4.2 oficial y el oráculo 1.3.14 (el último también contra
+el `bun-linux-aarch64` oficial); `T6/cc_headers_bionic_con_crash` contra los
+oficiales x64 **y** aarch64 por tasa. La regla del plan se aplicó en los dos
+frentes que se abrieron acá: reproduce arriba ⇒ se documenta y se fija como
+KNOWN; no reproduce arriba (o el código tocado es del port) ⇒ se parchea — así
+el DNS pasó de "entorno" a 0008 y el `recordType` quedó en KNOWN.
+
+### Estado tras A5
+
+8 parches versionados (0001–0008), 157 casos en 10 tiers, 148 verdes, 9 rojos
+atribuidos con evidencia upstream, 0 inesperados. `release-android.yml` **no** se
+dispatcheó (pendiente de autorización explícita).
 
 
 ## Bitácora
@@ -727,3 +848,27 @@ evidencia en 155 casos; `release-android.yml` no se dispatcheó.
   intacto `31392bde…` (byte a byte el del sello `a6-full`). El script quedó
   endurecido: `-ef` (source==dest aborta) y `--version` de SRC chequeda
   **antes** de instalar; ambos guardas probados en vivo.
+- 2026-10-08 (A5): cuestionados dos KNOWN "de entorno", la medición dio que uno
+  era del port: Termux publica `$PREFIX/etc/resolv.conf` con servers que
+  responden UDP:53 (26–42 ms) y upstream deja el fallback `127.0.0.1` en Android
+  a propósito (`c_ares.rs:722` + comentario 740-745). **Parche 0008** siembra el
+  archivo en el canal ⇒ `T2/node_dns_raw_resolve` KNOWN→PASS y `getServers()` =
+  `["8.8.8.8","8.8.4.4"]`. Run `37843749634`, sha `3c61913c…`, revisión
+  `0c087fdb9`, sello `a7-full` (156 casos, PASS=148, KNOWN=8, 0 FAIL/TIMEOUT/SKIP/
+  UNEXPECTED; diff vs `a6-full`: cero verdes perdidos) y sello vigente `a8-full`
+  (157 casos, `PASS=148 FAIL=0 KNOWN=9 UNEXPECTED=0`).
+- 2026-10-08 (A5): quirk medido y atribuido: `Bun.dns.resolve(h, {recordType:
+  "TXT"})` ignora el campo y hace `queryA`; la forma posicional `("h","TXT")` sí
+  elige el tipo. Idéntico en `bun-linux-x64` (`a83d2637…`) y `bun-linux-aarch64`
+  (`616f267a…`) oficiales 1.4.2 (run `37845989483`, caso nuevo de la sonda
+  `recordtype_obj_ignored`) ⇒ producto, sin parche; fijado como KNOWN
+  `T10/dns_resolve_obj_recordtype_elige_el_tipo`. Tambien documentado el shape
+  real de `Bun.dns.setServers` (triples `[family, address, port]`, leído del JS
+  embebido).
+- 2026-10-08 (A5): segunda receta verde para la cadena de headers bionic —
+  `clang -E` + 5 filtros + `#define ioctl`, entregado plano a `cc()` con
+  `-L/apex/… -lc` (`T6/cc_headers_bionic_via_clang_preprocesado`, `RET=7
+  SIZE=1616`). Dos correcciones nacidas de objetarla: el filtro de `__int128`
+  borra solo los dos typedefs (el placeholder de 16/16 viene de `tccdefs.h`, y el
+  caso lo fixea con guardas) y los flags tenían que llegar al hijo o `tcc` dejaba
+  `__errno`/`time`/`open`/`close`/`stat` sin resolver.

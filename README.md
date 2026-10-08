@@ -42,7 +42,7 @@ ci/                     source-manifest.json, setup-runner.sh, validate-source-t
 patches/android/        versioned Bionic/Termux patches (see docs/PATCHES.md)
 scripts/verify-*.sh     targeted on-device regressions (one per patch)
 scripts/battery-device.sh
-                        broad on-device battery: 155 cases over 10 tiers (T1–T10)
+                        broad on-device battery: 157 cases over 10 tiers (T1–T10)
 tests/fixtures/         battery cases + manifest (cases.txt) + shared helpers
 tests/parity-probe/     the same surface run against official buns (linux-x64
                         and linux-aarch64) to split "our port" from "upstream"
@@ -54,7 +54,7 @@ tests/parity-probe/     the same surface run against official buns (linux-x64
 docs/
   ARCHITECTURE.md       components map + data flow + invariants
   BUILD.md              build recipe, toolchain pins, CI/caches
-  PATCHES.md            the seven android patches and the TinyCC quadruple gate
+  PATCHES.md            the eight android patches and the TinyCC quadruple gate
   VERIFY.md             on-device protocol, the T1–T10 battery, evidence format
   RELEASE.md            publication policy and procedure
   STANDALONE.md         measured 1.4.2 `--compile` graph format (M4 bridge input)

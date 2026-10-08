@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Database } from "bun:sqlite";
-import { assert, caseMain, CASE_DIR, eq, eqJSON, withTimeout } from "./lib.mjs";
+import { assert, caseMain, CASE_DIR, eq, eqJSON, skip, withTimeout } from "./lib.mjs";
 
 const P = (...p) => path.join(CASE_DIR, ...p);
 
@@ -379,6 +379,26 @@ const cases = {
     // linea que contiene a `pos`. En "a\nbb\nccc" la linea de pos=3 cierra en 4.
     eq(Bun.indexOfLine(Buffer.from("a\nbb\nccc"), 3), 4, "indexOfLine sobre Buffer si resuelve");
     eq(Bun.indexOfLine("a\nbb\nccc", 3), 4, "indexOfLine sobre string deberia dar lo mismo (medido: -1)");
+  },
+
+  dns_resolve_obj_recordtype_elige_el_tipo: async () => {
+    // Rojo de producto, no del port: `recordType` dentro del objeto se ignora y
+    // el query sale A. Reprodujo IDENTICO en el bun-linux-x64 y en el
+    // bun-linux-aarch64 oficiales 1.4.2 (shas a83d2637… y 616f267a…, run
+    // 37845989483, caso `recordtype_obj_ignored`). La forma posicional
+    // `Bun.dns.resolve(host, "TXT")` si elige el tipo: esa esta fija como verde
+    // en T2/node_dns_raw_resolve. Se necesita la ruta cruda viva (parche 0008);
+    // sin resolv.conf de Termux no hay nada que medir.
+    const TERMUX_PREFIX = process.env.PREFIX || "/data/data/com.termux/files/usr";
+    const conf = path.join(TERMUX_PREFIX, "etc/resolv.conf");
+    if (!existsSync(conf)) skip(`no hay resolv.conf en ${conf}: la ruta cruda no tendria servers`);
+    const { promises: dnsPromises } = await import("node:dns");
+    const control = await withTimeout(15000, () => dnsPromises.resolveTxt("_dmarc.github.com"))
+      .catch(() => null);
+    if (!control || !JSON.stringify(control).includes("DMARC")) skip("sin red/TXT disponible: nada que comparar");
+    const txt = await withTimeout(15000, () => Bun.dns.resolve("_dmarc.github.com", { recordType: "TXT" }));
+    assert(JSON.stringify(txt).includes("DMARC"),
+      `Bun.dns.resolve con {recordType:"TXT"} deberia dar el TXT (medido: queryA ENOTFOUND) :: ${JSON.stringify(txt).slice(0, 80)}`);
   },
 };
 

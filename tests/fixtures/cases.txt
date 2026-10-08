@@ -157,3 +157,4 @@ T10|t10-producto.mjs|archive_zip_roundtrip_real|60|KNOWN
 T10|t10-producto.mjs|image_resize_y_encode|60|KNOWN
 T10|t10-producto.mjs|csrf_verify_con_el_mismo_secret|30|KNOWN
 T10|t10-producto.mjs|index_of_line_con_string_con_newline|30|KNOWN
+T10|t10-producto.mjs|dns_resolve_obj_recordtype_elige_el_tipo|45|KNOWN

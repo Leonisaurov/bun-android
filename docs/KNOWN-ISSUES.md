@@ -6,18 +6,21 @@ como limitación consciente.
 
 ## Runtime / CLI
 
-- **`dns.promises.resolve()` cuelga**: `dns.lookup`/`dns.resolve4` por
-  getaddrinfo funcionan, pero el resolver crudo de `node:dns` (`resolve`,
-  `resolveAny` con servidor explícito) nunca resuelve ni rechaza: el proceso
-  queda vivo para siempre (mediado con `8.8.8.8` y con el router). Idéntico en
-  el android oficial 1.3.14 y, a la inversa, **verde en el linux-x64 oficial
-  1.4.2** (run `37780014509`: `dns_raw_resolve|OK|["104.20.23.154", …]`) ⇒ el
-  código está bien, es el entorno: Termux no tiene `/etc/resolv.conf` ni
-  `/system/etc/resolv.conf`, y las props `net.dns1`/`net.dns2`/`dns.server`
-  están vacías (Android saca los resolvers por el canal privado de
-  `dnsproxyd`, que no es alcanzable desde un binario de app sin root).
-  **Sin parche**: inventar un resolver hardcodeado sería peor que el fallo.
-  Caso medido: `T2/node_dns_raw_resolve` (expect=KNOWN en la batería).
+- **`dns.promises.resolve()` cuelga** — ~~KNOWN~~ **parcheado con
+  [`0008`](../patches/android/0008-android-dns-resolv-conf-termux.patch)**. La
+  ruta cruda de `node:dns` (`resolve`, `resolveTxt`, `resolveMx`,
+  `Bun.dns.resolve`) quedaba viva para siempre porque el canal c-ares nacía con
+  el fallback `127.0.0.1`: Android saca los resolvers por el canal privado de
+  `dnsproxyd`, no alcanzable desde un binario de app sin root, y **upstream elige
+  dejar ese default** (`Channel::init` en `src/cares_sys/c_ares.rs:722`, con el
+  comentario que dice que así `dns.setServers()` funciona como workaround). Lo
+  que se había medido mal: Termux **sí** publica `$PREFIX/etc/resolv.conf`
+  (`8.8.8.8`/`8.8.4.4`) y esos servidores responden UDP:53 desde el uid de
+  Termux (26–42 ms). Con 0008 el canal los siembra; `Bun.dns.getServers()` →
+  `["8.8.8.8","8.8.4.4"]` y `resolve()` de A tarda 20–45 ms.
+  Casos medidos: `T2/node_dns_raw_resolve` (expect=PASS desde el sello
+  `a8-full`), `T10/dns_getservers_siembra_el_resolv_conf_de_termux` y
+  `T10/dns_ruta_sistema_y_cruda_ambas_vivas`.
 - **Shim `node` de `bun run`**: parcheado con
   [`0007`](../patches/android/0007-android-node-shim-dir-termux.patch)
   (shim en `tmp` de Termux); el `const` es compile-time, así que un prefijo
@@ -53,6 +56,21 @@ como limitación consciente.
     del header real sin `#pragma once` — deja `errno` funcional (`EAGAIN` →
     `RET=11`). Caso: `T6/cc_pragma_once_colision_de_basename_con_recipe`
     (PASS); los controles (sin pragma / basename distincto) también viven ahí.
+  - **Segunda receta verde (A5), sin tocar el preprocessor**: preprocesar con
+    `clang -E -std=gnu11` y entregarle a `cc()` el plano sin cadena de
+    `#include`. Filtros necesarios, medidos contra el error real: directivas de
+    línea, `_Nullable`/`_Nonnull`/`_Null_unspecified`, `__extension__`, las
+    líneas con `__int128`, las con `__overloadable__`, y `#define ioctl
+    __tcc_no_ioctl`. El filtro de `__int128` borra **solo** los dos typedefs de
+    bionic; el plano redeclara `__s128`/`__u128` con el placeholder propio de
+    tinycc (`include/tccdefs.h:182-186`, 16 bytes / align 16), así que ningún
+    tipo desaparece y el caso lo fija (`sizeof*100+__alignof__ = 1616`). Los
+    flags tienen que llegar al hijo (`flags: process.argv[3]`, `-L… -lc`): sin
+    linkage, tcc compila el plano pero deja `__errno`/`time`/`open`/`close`/
+    `stat` sin resolver. Caso: `T6/cc_headers_bionic_via_clang_preprocesado`
+    (PASS, cadena `errno+unistd+stdlib+string+time+fcntl+sys/stat`, `RET=7`).
+    Limitación honesta: la **aritmética** de 128 bits no funciona (error duro
+    de compilación, nunca silencioso) y `-E` requiere clang instalado.
   - **Gaps hermanos del mismo preprocessor**: tcc sirve `stddef.h`/`stdarg.h`
     builtin pero **no** `float.h` ni `iso646.h` (y bionic `limits.h:58`
     incluye `<float.h>`; `float.h` tampoco existe en los oficiales ⇒ no lo
@@ -91,6 +109,22 @@ como limitación consciente.
 
 ## Semántica medida que sorprende (no son bugs, pero hay que saberlos)
 
+- **`Bun.dns.resolve(hostname, {recordType:"TXT"})` ignora el campo y hace
+  `queryA`** (`queryA ENOTFOUND _dmarc.github.com`), mientras la forma
+  **posicional** `Bun.dns.resolve("_dmarc.github.com", "TXT")` sí devuelve el
+  registro. Con `{recordType:"MX"}` sobre `google.com` devuelve objetos
+  `{address, ttl}` (o sea, sigue siendo A). Reprodujo **idéntico** en los
+  oficiales linux-x64 y linux-aarch64
+  1.4.2 (shas `a83d2637…`/`616f267a…`, run `37845989483`, caso
+  `recordtype_obj_ignored`) ⇒ wrapper de producto, **sin parche**. Para un
+  fixture: usar `node:dns.promises.resolveTxt/resolveMx`, que sí respetan el
+  tipo. Caso medido: `T10/dns_resolve_obj_recordtype_elige_el_tipo`
+  (expect=KNOWN).
+- **`Bun.dns.setServers` exige triples `[family, address, port]`**, no
+  direcciones sueltas: con `["8.8.8.8"]` lanza `ERR_INVALID_ARG_TYPE` ("Expected
+  triple to be a array"). El shape está leído del JS embebido en el propio ELF
+  (`triples.push([ipVersion, …])`) y la ruta que lo consume es
+  `set_channel_servers` (lee índice 0 = familia, 1 = address, 2 = puerto).
 - `Bun.gzipSync`/`deflateSync` devuelven `Uint8Array`, y su `.toString()` es
   la lista de bytes separada por coma: se decodifica con `TextDecoder`.
   Byte-idéntico al oráculo 1.3.14 (mismo `len=120` para el mismo payload).
@@ -189,18 +223,19 @@ Dos más, del runner y de una dependencia:
   real.
 - Heap tagging: no necesario — el JSC es el prebuilt oficial de upstream y
   el estrés en dispositivo no mostró crashes.
-- **El resolver crudo no tiene a quién preguntar.** `Bun.dns.getServers()`
-  devuelve `["127.0.0.1"]`: Android publica dnsproxyd en loopback y ese
-  puerto **no responde** desde el uid de Termux (medido: un `sendto` UDP a
-  `127.0.0.1:53` no recibe nunca, no es `ECONNREFUSED`). Caen por el mismo
-  motivo todos los caminos crudos — `node:dns.promises.resolve4()` cuelga y
-  `Bun.dns.resolve(..., {verb:true})` lanza `queryA ETIMEOUT` **tras ~21 s**
-  (medido 20792 ms; si un fixture le pone una carrera de 20 s afirma el error
-  del wrapper, no el de bun) — mientras la ruta de sistema funciona
-  (`node:dns.promises.lookup()` da `104.20.23.154`).
-  No hay `/etc/resolv.conf` ni `net.dns*` que setear. Nota para leer logs: el
-  proceso sí muere limpio tras el `ETIMEOUT` (`rc=0`); si un probe con
-  `dgram` queda vivo es el socket propio sin cerrar, no el port.
+- **El dnsproxyd de Android no es alcanzable (y no hace falta).** Android
+  publica sus resolvers por un canal privado en loopback y ese puerto
+  **no responde** desde el uid de Termux (medido: un `sendto` UDP a
+  `127.0.0.1:53` no recibe nunca, no es `ECONNREFUSED`); no hay
+  `/etc/resolv.conf` en ruta FHS ni props `net.dns*` que setear
+  (`getprop net.dns1` sale vacío). Era la causa de los timeouts de ~21 s que
+  se veían antes de **0008**; hoy el port siembra los nameservers de
+  `$PREFIX/etc/resolv.conf`, que sí responden (ver el primer bullet de
+  Runtime/CLI). Dos notas de lectura de logs que siguen valiendo: si un
+  fixture le pone una carrera de 20 s a `Bun.dns.resolve` afirma el error del
+  wrapper, no el de bun; y el proceso muere limpio (`rc=0`) tras un
+  `ETIMEOUT` — si un probe con `dgram` queda vivo es el socket propio sin
+  cerrar, no el port.
 - Sockets unix: funcionan sobre bionic (`Bun.serve({unix})`, `fetch(...,
   {unix})`, `Bun.listen({unix, socket})` servido a un cliente `node:net`), así
   que nada que dependa de AF_UNIX necesita workaround.
