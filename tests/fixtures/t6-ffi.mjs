@@ -180,13 +180,15 @@ const cases = {
   },
 
   // Causa del crash anterior, acotada a dos lineas de header (A5, sondas
-  // a5c..a5h en $PREFIX/tmp): libtcc sega —determinista, 3/3— cuando un archivo
-  // declarado con `#pragma once` trae por debajo OTRO archivo con el mismo
-  // basename. Bionic lo pica porque `errno.h` usa pragma once e incluye
-  // `<linux/errno.h>`; glibc no, porque usa include guards (por eso el mismo
-  // repro es verde en linux-x64). No es codigo de nuestros parches: es del
-  // preprocessor de la dependencia vendored. La receta medida: un shadow-dir
-  // con el pragma quitado, que ademas deja `errno` funcional.
+  // a5c..a5h en $PREFIX/tmp): libtcc sega —en este ELF, 20/20— cuando un
+  // archivo declarado con `#pragma once` trae por debajo OTRO archivo con el
+  // mismo basename. Bionic lo pica en la ruta real porque `errno.h` usa pragma
+  // once e incluye `<linux/errno.h>`. Atribucion por sonda upstream (runs
+  // 37792716755/37793508977/37793514722): el repro sintetico sega 3/3 en el
+  // OFICIAL linux-aarch64 y 1/4 en el OFICIAL linux-x64 => bug latente de la
+  // libtcc vendored, sensible a la arquitectura/layout de memoria; no viene
+  // de nuestros parches. La receta medida: un shadow-dir con el pragma
+  // quitado, que ademas deja `errno` funcional.
   cc_pragma_once_colision_de_basename_con_recipe: async () => {
     requirePath(`${TERMUX_PREFIX}/include/errno.h`, "headers de Termux");
     const runner = P("run-pragma.mjs");
