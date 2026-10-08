@@ -247,12 +247,24 @@ const cases = {
   // t6-clang-e en $PREFIX/tmp): preprocesar con clang -E y entregarle a tcc el
   // resultado plano, sin la cadena de #include. Tres filtros, cada uno medido
   // contra el error real de tcc:
-  //   - lineas `__int128`: tcc no conoce el keyword y bionic lo usa en los
-  //     typedefs `__s128`/`__u128` de sys/types.h (`error: ';' expected`).
+  //   - lineas que contienen `__int128`: son UNICAMENTE los dos typedefs de
+  //     sys/types.h (`typedef __signed__ __int128 __s128;` y su gemelto). tcc
+  //     no conoce esa grafia y tira `error: ';' expected (got '__s128')`. No se
+  //     borra ningun uso: los NOMBRES se re-declaran con el placeholder que la
+  //     propia tinycc define en include/tccdefs.h (`__int128_t`/`__uint128_t`
+  //     = struct de 16 bytes aligned(16)), asi que `sizeof`/`__alignof__` dan
+  //     lo que bionic declaraba y los campos `__uint128_t vregs[32]` de
+  //     signal.h siguen intactos (esos ni los toca el filtro: no contienen la
+  //     cadena `__int128`). Lo que NO existe es la Aritmetica de 128 bits, que
+  //     tampoco existe en tcc sin esta receta (medido: `a = a + 1` es un error
+  //     de compilacion duro, nunca un valor silenciosamente errado).
   //   - lineas `__overloadable__`: bionic declara `ioctl` dos veces con tipos
-  //     distintos (`error: incompatible types for redefinition`).
-  //   - anotaciones `_Nullable`/`_Nonnull`/`_Null_unspecified`.
-  // Sin el crash (rc=139) desaparece: cc() compila y `errno` funciona.
+  //     distintos (`error: incompatible types for redefinition`) y tcc no tiene
+  //     overloading; se tira fuera la variante `unsigned __op` y se renombra la
+  //     declaracion restante (`#define ioctl __tcc_no_ioctl`) para que no pelee
+  //     con el builtin de tcc.
+  //   - anotaciones `_Nullable`/`_Nonnull`/`_Null_unspecified` y `__extension__`.
+  // Con esto el crash (rc=139) desaparece: cc() compila y `errno` funciona.
   cc_headers_bionic_via_clang_preprocesado: async () => {
     requirePath(`${TERMUX_PREFIX}/include/errno.h`, "headers de Termux");
     const clang = Bun.which("clang");
@@ -265,13 +277,24 @@ const cases = {
       "  errno = EAGAIN; time_t t = time(0);\n" +
       "  int fd = open(\"/dev/null\", O_RDONLY); int r = fd >= 0 ? 1 : 0; if (fd >= 0) close(fd);\n" +
       "  stat(\"/dev/null\", &st); free(p);\n" +
-      "  return (errno == EAGAIN && r && t) ? 7 : 0;\n}\n");
+      "  return (errno == EAGAIN && r && t) ? 7 : 0;\n}\n" +
+      // Fixea que el placeholder re-declarado conserva tamano y alineacion de
+      // bionic: 16*100 + 16 = 1616.
+      "int g(void) { return (int)(sizeof(__s128) * 100 + __alignof__(__s128)); }\n");
 
     const pre = Bun.spawn({ cmd: [clang, "-E", "-std=gnu11", src, "-o", P("hdr-all.i")], cwd: CASE_DIR, stderr: "pipe" });
     const rcPre = await withTimeout(90000, () => pre.exited);
     eq(rcPre, 0, "clang -E sobre la cadena de headers: " + (await new Response(pre.stderr).text()).slice(0, 140));
 
-    const flat = readFileSync(P("hdr-all.i"), "utf8")
+    const raw = readFileSync(P("hdr-all.i"), "utf8");
+    // Que el filtro siga borrando SOLO los typedefs: si una cabecera empezara a
+    // usar `__int128` en otra linea, este caso tiene que gritar, no colarse.
+    const conInt128 = raw.split("\n").filter((l) => l.includes("__int128"));
+    eq(conInt128.length, 2, "lineas con __int128 en el .i (se esperaban los dos typedefs): " + JSON.stringify(conInt128).slice(0, 200));
+    assert(conInt128.every((l) => /^typedef .*__int128 __[us]128 /.test(l)),
+      "las lineas filtradas son typedefs de __s128/__u128: " + JSON.stringify(conInt128).slice(0, 200));
+
+    const flat = raw
       .replace(/^#[ \t].*$/gm, "")
       .replace(/_Null_?[a-z_]*/g, "")
       .replace(/__extension__ /g, "")
@@ -280,15 +303,18 @@ const cases = {
     const flatPath = P("hdr-all-flat.c");
     writeFileSync(flatPath,
       "#define ioctl __tcc_no_ioctl\n" +
-      "typedef struct { long lo, hi; } __s128;\n" +
-      "typedef struct { unsigned long lo, hi; } __u128;\n" + flat);
+      "typedef __uint128_t __s128;\n" +
+      "typedef __uint128_t __u128;\n" + flat);
 
     const runner = P("run-flat.mjs");
     writeFileSync(runner,
       'import { cc } from "bun:ffi";\n' +
-      "const lib = cc({ source: process.argv[2], symbols: { f: { returns: \"i32\", args: [] } },\n" +
-      "  flags: process.argv[3] });\n" +
-      'console.log("RET=" + lib.symbols.f());\n');
+      "const lib = cc({ source: process.argv[2], symbols: {\n" +
+      "  f: { returns: \"i32\", args: [] }, g: { returns: \"i32\", args: [] } },\n" +
+      // Los flags van al argv[3]: sin la cadena de linkage (`-lc` bionic) tcc
+      // compila el plano pero no resuelve __errno/time/open/close/stat.
+      "  flags: process.argv[3] || undefined });\n" +
+      'console.log("RET=" + lib.symbols.f() + " SIZE=" + lib.symbols.g());\n');
     const p = Bun.spawn({
       cmd: [process.execPath, runner, flatPath, `${TCC_ANDROID_DEF} -L${BIONIC_DIR} -lc`],
       cwd: CASE_DIR, stdout: "pipe", stderr: "pipe",
@@ -297,7 +323,7 @@ const cases = {
     const out = (await new Response(p.stdout).text()).trim();
     const err = (await new Response(p.stderr).text()).trim();
     eq(rc, 0, `el hijo plano sobrevive (rc=${rc}) :: ${out.slice(0, 60)} ${err.slice(0, 140)}`);
-    eq(out, "RET=7", "errno/unistd/time/stat/fcntl preprocesados compilan y corren");
+    eq(out, "RET=7 SIZE=1616", "errno/unistd/time/stat/fcntl preprocesados compilan y corren, con el layout de 128 bits intacto");
   },
 };
 
