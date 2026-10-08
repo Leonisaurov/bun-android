@@ -107,7 +107,10 @@ jobs:
           WORK="$RUNNER_TEMP/release"
           STAGE="$WORK/bun-linux-aarch64-android"
           mkdir -p "$STAGE"
-          mv "$WORK/bun-aarch64-android" "$STAGE/bun"
+          # cp, no mv: "Create release" sube TAMBIEN el ELF suelto (lo promete
+          # docs/RELEASE.md: "byte identico al artifact"). Con mv el archivo ya
+          # no existia al momento de subir y gh abortaba "no matches found".
+          cp "$WORK/bun-aarch64-android" "$STAGE/bun"
           ( cd "$WORK" && tar -czf "$WORK/bun-linux-aarch64-android.tar.gz" bun-linux-aarch64-android )
           sha256sum "$WORK/bun-linux-aarch64-android.tar.gz" \
             | sed "s|$WORK/||" > "$WORK/bun-linux-aarch64-android.tar.gz.sha256"
