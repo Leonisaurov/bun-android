@@ -81,7 +81,10 @@ jobs:
           set -euo pipefail
           WORK="$RUNNER_TEMP/release"
           rm -rf "$WORK"; mkdir -p "$WORK/art"
-          gh run download "$RUN_ID" -n bun-aarch64-android -D "$WORK/art"
+          # Sin paso de checkout en este job: gh necesita el repo explicito, si no
+          # intenta inferirlo del cwd y muere "not a git repository" (run
+          # 37849246801). Medido tambien fuera de un repo: con --repo funciona.
+          gh run download "$RUN_ID" -n bun-aarch64-android --repo "$GITHUB_REPOSITORY" -D "$WORK/art"
           # Single-file artifact (the linked android bun; see build-android.sh)
           [ "$(find "$WORK/art" -type f | wc -l)" -eq 1 ] || {
             echo "esperaba exactamente 1 archivo en el artefacto" >&2; exit 1; }
