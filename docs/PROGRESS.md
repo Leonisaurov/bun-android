@@ -794,7 +794,57 @@ el DNS pasó de "entorno" a 0008 y el `recordType` quedó en KNOWN.
 
 8 parches versionados (0001–0008), 157 casos en 10 tiers, 148 verdes, 9 rojos
 atribuidos con evidencia upstream, 0 inesperados. `release-android.yml` **no** se
-dispatcheó (pendiente de autorización explícita).
+dispatcheó (pendiente de autorización explícita). *— superado por A6: la
+autorización llegó y la release está publicada.*
+
+
+## A6 · publicación `v1.4.2-android.1` — CERRADO 2026-10-08
+
+Con la autorización explícita del usuario (*"Has el dispatch"*), se publicó el
+ELF del sello `a8-full`. El lane de release nunca se había ejecutado en vivo,
+así que A6 es, además del hecho de publicar, la **primera medición de ese
+lane**: los tres defectos que tenía son todos demostrables sin teléfono.
+
+### Los tres bugs del lane (ningún dispatch fallido publicó nada)
+
+1. **Gate falso por confusión run-name/workflow-name** (commiteado en
+   `1127ee1`). La API de runs devuelve en `.name` el *run-name* del dispatch
+   (`"bun-android android"`), no el nombre del workflow; el assert histórico
+   `"build-android completed success"` no matcheaba ni con el run correcto. Hoy
+   compara `workflow_id` — leído del listado de workflows, `377433552` aquí, sin
+   pinearlo — y exige `head_branch == main`. Se cazó con un dry-run local contra
+   la API real, no a costa de un dispatch.
+2. **`gh run download` sin `--repo`** (`7044f05`): el job no hace checkout, así
+   que `gh` intentaba resolver el repo contra un git inexistente ⇒ `failed to
+   run git: fatal: not a git repository`. Run fallido `37849246801`.
+3. **`Package tarball` movía el ELF suelto** (`9c728f2`): `mv` dejaba vacía la
+   ruta que el paso de subida esperaba ⇒ `gh` abortó con `no matches found for
+   …/bun-aarch64-android` y la release habría salido con tres assets en vez de
+   los cuatro que promete `RELEASE.md`. Run fallido `37849466515`.
+
+El dispatch definitivo (`37849789407`, `success`) también valida el rango de
+parches del cuerpo de la release leyéndolo del tree del commit origen
+(`patches/android/0001..0008`, 8 en total) en lugar de hardcodearlo.
+
+### Lo publicado y cómo se verificó desde afuera
+
+Tag [`v1.4.2-android.1`](https://github.com/Leonisaurov/bun-android/releases/tag/v1.4.2-android.1),
+run fuente `37843749634` (commit `0c087fdb9f37…`), cuatro assets con su
+`.sha256.txt`. La verificación no usó el artifact interno sino **la release
+como la bajaría un usuario**: sha medido del tarball = sha del asset
+autodescriptivo = `digest` de la API (`404c41d3…`); el ELF dentro del tar,
+streammeado con `tar -xOzf … | sha256sum`, es `3c61913c…` — byte a byte el
+binario instalado. Ejecutado desde la extracción: `1.4.2`,
+`1.4.2-canary.1+0c087fdb9`, `Bun.dns.getServers()` → `["8.8.8.8","8.8.4.4"]`
+(0008 vivo en el paquete publicado) y `Bun.fetch` a `https://example.com` → 200.
+
+### Estado tras A6
+
+Ocho parches (0001–0008), 157 casos (PASS=148, KNOWN=9, 0 inesperados) y
+**primera release pública del port**. El ELF publicado es el mismo que corre en
+`~/.bun-android/bin/bun` y `~/.local/bin/bun`; `$PREFIX/bin/bun` sigue siendo el
+1.3.14 oráculo. Queda abierto el puente M4/standalone (proyecto aparte) y el
+gate de publicación, que ahora exige la referencia a la evidencia en el body.
 
 
 ## Bitácora
@@ -872,3 +922,16 @@ dispatcheó (pendiente de autorización explícita).
   borra solo los dos typedefs (el placeholder de 16/16 viene de `tccdefs.h`, y el
   caso lo fixea con guardas) y los flags tenían que llegar al hijo o `tcc` dejaba
   `__errno`/`time`/`open`/`close`/`stat` sin resolver.
+- 2026-10-08 (A6): **primera release publicada** — `v1.4.2-android.1`, run de
+  publicación `37849789407` (`success`) sobre el run fuente `37843749634`
+  (commit `0c087fdb9f37…`, sello `a8-full`). Cuatro assets; el ELF suelto
+  `3c61913c…` y el tarball `404c41d3…`. Verificado desde la release (no desde el
+  artifact): el ELF dentro del tar descargado da el mismo sha que el binario
+  instalado y, ejecutado, `1.4.2-canary.1+0c087fdb9` + `getServers()` =
+  `["8.8.8.8","8.8.4.4"]` + `fetch` 200. El lane se midió en vivo por primera
+  vez y tenía tres defectos: un gate que comparaba el *run-name* en lugar del
+  `workflow_id` (imposible de matchear, `1127ee1`), `gh run download` sin
+  `--repo` en un job sin checkout (`7044f05`, run fallido `37849246801`) y `mv`
+  en vez de `cp` al empaquetar, que habría publicado 3 assets en lugar de 4
+  (`9c728f2`, run fallido `37849466515`). Descarga de verificación borrada en la
+  misma sesión; el oráculo 1.3.14 de `$PREFIX/bin` intacto.

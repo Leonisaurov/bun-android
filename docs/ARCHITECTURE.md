@@ -52,6 +52,6 @@ Tres invariantes del diseño:
 Deliberada y limitada: este side project **no** importa ni exporta artefactos
 del port cerrado (era-Zig 1.2.13+1.3.2). El único puente posible es M4
 (standalone/opencode sobre 1.4.2), hoy pausado con la sonda medida; ver
-[`ROADMAP.md`](ROADMAP.md) § 2. Las reglas heredadas que sí se aplican acá
+[`ROADMAP.md`](ROADMAP.md) § 1. Las reglas heredadas que sí se aplican acá
 (cache recovery, pins, git am, evidencia) vienen de ese workspace y se
 respetan sin que esto lo toque.

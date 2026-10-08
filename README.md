@@ -4,9 +4,15 @@ Port of **Bun v1.4.2** (Rust rewrite; zero `.zig` files) to Android/Bionic,
 built from source in our own GitHub Actions. Milestones M0–M4 plus the broad
 on-device audits — A1 surface, A2 surface extension + upstream parity
 classification, A3 product-surface tier T10 classified the same way, A4
-root-cause of the libtcc SIGSEGV with a verified workaround — live in
-[`docs/PROGRESS.md`](docs/PROGRESS.md); all upstream pins live in
-[`ci/source-manifest.json`](ci/source-manifest.json).
+root-cause of the libtcc SIGSEGV with a verified workaround, A5 patch 0008
+(Termux resolv.conf into c-ares) — live in [`docs/PROGRESS.md`](docs/PROGRESS.md);
+all upstream pins live in [`ci/source-manifest.json`](ci/source-manifest.json).
+
+**First public release**: [`v1.4.2-android.1`](https://github.com/Leonisaurov/bun-android/releases/tag/v1.4.2-android.1)
+— the `a8-full` binary (157 battery cases, 148 PASS / 0 FAIL / 9 KNOWN), sha256
+`3c61913c9420c578536225e4f11a85ecf9619a26f6c0094d06b06bff30de31f9`, four assets,
+verified by downloading the release on the phone. Procedure and record:
+[`docs/RELEASE.md`](docs/RELEASE.md).
 
 This is a **side project**. It is deliberately isolated from the
 `opencode-termux` workspace, whose Bun port (era-Zig: runtime 1.2.13 +
@@ -49,6 +55,7 @@ tests/parity-probe/     the same surface run against official buns (linux-x64
 .github/workflows/
   build-android.yml     workflow_dispatch: host-smoke | android (no publish)
   release-android.yml   workflow_dispatch only: publishes a prior android run
+                        (v1.4.2-android.1 published)
   probe-upstream-parity.yml
                         downloads an official bun and runs tests/parity-probe
 docs/
@@ -62,6 +69,24 @@ docs/
   ROADMAP.md            what's left and the open decisions
   PROGRESS.md           milestone checklist + evidence log (canonical)
 ```
+
+## Install from the release (Termux)
+
+```sh
+gh release download v1.4.2-android.1 --repo Leonisaurov/bun-android \
+  -p bun-linux-aarch64-android.tar.gz
+sha256sum bun-linux-aarch64-android.tar.gz   # 404c41d38900af50…
+tar -xzf bun-linux-aarch64-android.tar.gz
+mkdir -p ~/.bun-android/bin
+mv bun-linux-aarch64-android/bun ~/.bun-android/bin/bun && chmod +x ~/.bun-android/bin/bun
+~/.bun-android/bin/bun --revision              # 1.4.2-canary.1+0c087fdb9
+```
+
+Requires API 28+ (JavaScriptCore comes from the official android28 prebuilt).
+`docs/VERIFY.md` is the on-device protocol used to accept the build; the
+targeted regressions (`scripts/verify-*.sh`) and the battery
+(`scripts/battery-device.sh`) run against `$HOME/.bun-android/bin/bun` by
+explicit path, never via `PATH`.
 
 ## Acceptance rule
 

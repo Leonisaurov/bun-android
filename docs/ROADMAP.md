@@ -31,24 +31,25 @@ de decisión.
   (job nuevo `probe-aarch64`), 20/20 en nuestro ELF — bug latente de la libtcc
   vendored, no del port. `float.h`/`iso646.h` tampoco los trae upstream.
   Runs `37791139445`–`37794547875`.
-- Infra de repo: workflow de build, workflow de publicación (probado en
-  negativo), set de docs.
+- **A5 · 0008 de nameservers + segunda receta de T6** (ELF nuevo, run
+  `37843749634`, sha `3c61913c…`, sellos `a7-full`/`a8-full`: 157 casos, 148
+  PASS / 0 FAIL / 9 KNOWN). El rojo "de entorno" del DNS era en realidad del
+  port: upstream deja el fallback `127.0.0.1` en Android a propósito y Termux
+  sí publica `$PREFIX/etc/resolv.conf` usable. El quirk nuevo que apareció al
+  medirlo (`Bun.dns.resolve` ignora `{recordType}`) quedó KNOWN por reproducirse
+  igual en los dos oficiales.
+- **A6 · primera release pública** — `v1.4.2-android.1`, dispatch `37849789407`
+  sobre el run `37843749634` (sello `a8-full`). Cuatro assets; verificación
+  hecha descargando la release en el teléfono (el ELF del tarball da el mismo
+  sha256 que el instalado). Los tres bugs del lane que se cazaron al despachar —
+  gate que comparaba el *run-name*, `gh run download` sin `--repo`, `mv` que
+  habría publicado 3 assets — están en [`RELEASE.md`](RELEASE.md).
+- Infra de repo: workflow de build, workflow de publicación (probado en vivo al
+  despachar A6: tres bugs de lane corregidos en el camino), set de docs.
 
 ## Pendiente
 
-### 1. Release pública (dispatch listo, falta la orden)
-
-`release-android.yml` está en main y validado (guarda rechaza inputs
-inválidos sin crear nada), y desde A1 su gate de ELF es real (el patrón
-`OS ABI: UNIX Android` que exigía no lo produce nunca `readelf`). Publicar =
-un `workflow_dispatch` con `run_id=37727225410` (el binario con el que está
-cerrada la evidencia de A1; `run_id=37652505142` es el anterior) +
-`tag=v1.4.2-android.1` + `evidence_ref` apuntando al hito A1 de
-`PROGRESS.md`. **No se dispara sin autorización explícita** (modo
-"seguir y reportar, sin publicar" del usuario). Procedimiento completo:
-[`RELEASE.md`](RELEASE.md).
-
-### 2. Puente M4 / standalone con opencode — en pausa con medición hecha
+### 1. Puente M4 / standalone con opencode — en pausa con medición hecha
 
 Sonda `--compile` verde y formato del grafo medido: ver
 [`STANDALONE.md`](STANDALONE.md). El intento de **build real de opencode
@@ -70,7 +71,7 @@ se reduce a la release de este repo + un lane de CI opencode, y el port
 cerrado era-Zig queda reemplazable solo cuando la build real sea verde de
 punta a punta. No se migra nada del workspace sin esa evidencia.
 
-### 3. Cierre de M3 residual
+### 2. Cierre de M3 residual
 
 - [x] `BUN_NODE_DIR` (shim node) → cerrado por el parche `0007` en A1 (era el
   único FAIL de la batería).
@@ -94,7 +95,7 @@ punta a punta. No se migra nada del workspace sin esa evidencia.
       — ningún candidato queda ya como "verducible" con código de este port:
       los nueve son upstream/entorno, documentados con evidencia.
 
-### 4. Si la superficie crece
+### 3. Si la superficie crece
 
 La batería vive en el teléfono (no hay Bionic/seccomp en `ubuntu-latest`, así
 que un gate de batería en CI sería ruido). Al agregar casos: manifiesto en
