@@ -80,11 +80,11 @@ prebuilt se extraído desde `~/.cache/bun-build`; solo moría el upload edge.
   gate real es que el linker bionic lo cargue en el teléfono (ver abajo).
 - [x] Riesgos cc-rs/`__ANDROID_API__`: **no materializados** — el cross-build
   pasó en la primera corrida sin patches (`patches/android/` sigue vacío).
-- [ ] Release propia (tarball) vía `workflow_dispatch` (no push). Mecanismo
+- [x] Release propia (tarball) vía `workflow_dispatch` (no push). Mecanismo
   listo desde 2026-10-07: `.github/workflows/release-android.yml` (consume el
   artifact `bun-aarch64-android` de un run android previo; política y
-  procedimiento en `docs/RELEASE.md`). Pendiente solo el dispatch, que crea
-  la release pública.
+  procedimiento en `docs/RELEASE.md`). **Dispatch hecho el 2026-10-08**:
+  `v1.4.2-android.1` (run `37849789407`), ver hito A6 abajo.
 - [x] Cierre en dispositivo: `~/.bun-android/bin/bun --version` ⇒ `1.4.2`
   rc=0 (no toca `~/.local/bin`).
 
@@ -96,8 +96,8 @@ prebuilt se extraído desde `~/.cache/bun-build`; solo moría el upload edge.
   en `~/.bun-android/bin/bun`, sha256 idéntico al de CI, y
   `bun --version -> '1.4.2' rc=0`.
 
-Pendiente menor: la release propia se emite cuando el binario merezca ser
-distribuido (tras M2/M3); no bloquea el hito.
+La release propia se emitía cuando el binario mereciera ser distribuido (tras
+M2/M3); ese momento llegó con A5 y se despachó el 2026-10-08.
 
 ## M2 · smoke real en Bionic — CERRADO 2026-10-07
 
@@ -147,7 +147,7 @@ sha256 `5245f48f…`, 2026-10-07):
   (solo afecta si un script invoca `node` sin node en PATH; fuera del alcance
   de los smokes). **Portado en A1**: ese "fuera del alcance" resultó rojo real
   y lo cierra el parche `0007` (ver hito A1 abajo).
-- [ ] TinyCC: gate cuádruple descubierto — (a) `config.ts`/`deps/tinycc.ts`
+- [x] TinyCC: gate cuádruple descubierto — (a) `config.ts`/`deps/tinycc.ts`
   (patch `0002`, habilita el build DirectBuild: fetch + codegen `tccdefs_.h` +
   10 objetos linkeados; la "anomalía" de edges ausentes era truncado del log
   de Actions, verificado por gaps de numeración 187–339/341–1220 donde
@@ -171,7 +171,14 @@ sha256 `5245f48f…`, 2026-10-07):
   `1.4.2-canary.1+c23b9c226`): `verify-tinycc-device.sh` ⇒ `cc add3(1,2,3)
   = 6`, rc=0. Limitación portada (igual que zig-era): sin stdlib, código C
   que referencie símbolos libc requiere resolución adicional; fuera del
-  smoke de paridad.
+  smoke de paridad. **Cerrada en A2/A4 midiendo, sin parche nuevo**: `cc()`
+  SÍ linkea libc en Android con `-L/apex/com.android.runtime/lib64/bionic -lc`
+  (y `BUN_TCC_OPTIONS` a nivel proceso), y para headers bionic compuestos
+  existen dos recetas verdes fijadas como casos de la batería
+  (`T6/cc_headers_bionic_via_clang_preprocesado` y
+  `T6/cc_pragma_once_colision_de_basename_con_recipe`). El SIGSEGV residual
+  quedó atribuido en A4 a la tinycc vendored (12/20 x64 y 13/20 aarch64 en los
+  oficiales contra el mismo repro).
 - [x] Cierre 2026-10-07: seis patches versionados (`0001` openat2, `0002`
   tinycc config/defines, `0003` ENABLE_TINYCC codegen, `0004` tmpdir Termux,
   `0005` tcc_externs reales, `0006` tcc -nostdlib) aplicados por CI con
@@ -935,3 +942,10 @@ gate de publicación, que ahora exige la referencia a la evidencia en el body.
   en vez de `cp` al empaquetar, que habría publicado 3 assets en lugar de 4
   (`9c728f2`, run fallido `37849466515`). Descarga de verificación borrada en la
   misma sesión; el oráculo 1.3.14 de `$PREFIX/bin` intacto.
+- 2026-10-10 (saneamiento de docs, sin código): tres casillas seguían abiertas
+  después de cerradas — el dispatch de release (`PROGRESS.md` M1, hecho el
+  2026-10-08 con `v1.4.2-android.1`), la nota "pendiente menor" de abajo y el
+  gate cuádruple de TinyCC (M3, cerrado por 0002/0003/0005/0006 y por las
+  recetas de A2/A4). Quedan abiertas solo las que son acción real: los 5 items
+  del puente M4 en `STANDALONE.md` (en pausa) y los dos de `ROADMAP.md` sin
+  demanda medida. Cabecera del roadmap actualizada a "tras A6".

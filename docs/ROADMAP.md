@@ -1,6 +1,6 @@
 # Roadmap
 
-Estado a 2026-10-08 (tras A4). Lo cerrado tiene evidencia fechada en
+Estado a 2026-10-10 (tras A6). Lo cerrado tiene evidencia fechada en
 [`PROGRESS.md`](PROGRESS.md); acá solo queda lo pendiente, con su contexto
 de decisión.
 
